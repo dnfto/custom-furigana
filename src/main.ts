@@ -167,6 +167,10 @@ const JAPANESE_WORD = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}々�
 const HAN_BLOCK = /[\p{Script=Han}々〆ヶ]+/gu;
 const LEGACY_RUBY = /([\p{Script=Han}々〆ヶ]+)\{([^{}|\n]+)\}/gu;
 const ADVANCED_RUBY = /\{([^{}|\n]+)\|([^{}\n]+)\}/gu;
+const RENDERED_BLOCK_SELECTOR =
+	'p, li, dt, dd, td, th, figcaption, h1, h2, h3, h4, h5, h6';
+const RENDERED_TEXT_EXCLUSION_SELECTOR =
+	'code, pre, kbd, samp, script, style, textarea, input, ruby, rt, .math, .frontmatter';
 
 function isEscaped(text: string, index: number): boolean {
 	let slashCount = 0;
@@ -312,6 +316,124 @@ function automaticRubyBase(node: ChildNode | null): string | null {
 		base += child.textContent ?? '';
 	}
 	return base || null;
+}
+
+function unwrapAutomaticRuby(root: HTMLElement): void {
+	const parents = new Set<ParentNode>();
+	for (const ruby of Array.from(
+		root.querySelectorAll('ruby.custom-furigana-auto-ruby'),
+	)) {
+		const base = automaticRubyBase(ruby);
+		if (!base || !ruby.parentNode) continue;
+		const parent = ruby.parentNode;
+		parent.replaceChild(document.createTextNode(base), ruby);
+		parents.add(parent);
+	}
+	for (const parent of parents) parent.normalize();
+	root.normalize();
+}
+
+function restoreGeneratedRuby(root: ParentNode): void {
+	const parents = new Set<ParentNode>();
+	for (const ruby of Array.from(
+		root.querySelectorAll<HTMLElement>(
+			'ruby.custom-furigana-ruby[data-syntax]',
+		),
+	)) {
+		if (!ruby.parentNode) continue;
+		const base = automaticRubyBase(ruby) ?? Array.from(ruby.childNodes)
+			.filter(
+				(child) =>
+					!(child instanceof HTMLElement && child.tagName === 'RT'),
+			)
+			.map((child) => child.textContent ?? '')
+			.join('');
+		const reading = ruby.querySelector(':scope > rt')?.textContent ?? '';
+		const syntax = ruby.dataset.syntax as RubySource | undefined;
+		const source =
+			syntax === 'auto'
+				? base
+				: syntax === 'advanced'
+					? `{${base}|${reading}}`
+					: `${base}{${reading}}`;
+		const parent = ruby.parentNode;
+		parent.replaceChild(document.createTextNode(source), ruby);
+		parents.add(parent);
+	}
+	for (const parent of parents) parent.normalize();
+}
+
+interface RenderedTextPart {
+	node: Text;
+	start: number;
+	end: number;
+}
+
+function renderedTextGroups(root: HTMLElement): Map<HTMLElement, Text[]> {
+	const containingBlock = root.closest<HTMLElement>(RENDERED_BLOCK_SELECTOR);
+	const scope = containingBlock ?? root;
+	const groups = new Map<HTMLElement, Text[]>();
+	const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, {
+		acceptNode(node) {
+			const parent = node.parentElement;
+			if (!parent || !node.nodeValue) return NodeFilter.FILTER_REJECT;
+			if (parent.closest(RENDERED_TEXT_EXCLUSION_SELECTOR)) {
+				return NodeFilter.FILTER_REJECT;
+			}
+			return NodeFilter.FILTER_ACCEPT;
+		},
+	});
+
+	while (walker.nextNode()) {
+		const node = walker.currentNode as Text;
+		const block = node.parentElement?.closest<HTMLElement>(
+			RENDERED_BLOCK_SELECTOR,
+		);
+		const group = block && scope.contains(block) ? block : scope;
+		const nodes = groups.get(group) ?? [];
+		nodes.push(node);
+		groups.set(group, nodes);
+	}
+	return groups;
+}
+
+function renderAuthoredRuby(root: HTMLElement): void {
+	for (const nodes of renderedTextGroups(root).values()) {
+		const parts: RenderedTextPart[] = [];
+		let text = '';
+		for (const node of nodes) {
+			const value = node.nodeValue ?? '';
+			const start = text.length;
+			text += value;
+			parts.push({ node, start, end: text.length });
+		}
+
+		const matches = extractRuby(text);
+		for (const match of matches.reverse()) {
+			const startPart = parts.find(
+				(part) => match.start >= part.start && match.start < part.end,
+			);
+			const endPart = parts.find(
+				(part) => match.end > part.start && match.end <= part.end,
+			);
+			if (!startPart?.node.isConnected || !endPart?.node.isConnected) continue;
+
+			const range = document.createRange();
+			range.setStart(startPart.node, match.start - startPart.start);
+			range.setEnd(endPart.node, match.end - endPart.start);
+			range.deleteContents();
+			range.insertNode(createRubyElement(match));
+			range.detach();
+		}
+	}
+}
+
+function renderedBlockContainsRawRuby(node: Node, root: HTMLElement): boolean {
+	const parent = node.parentElement;
+	if (!parent) return false;
+	const block = parent.closest<HTMLElement>(RENDERED_BLOCK_SELECTOR);
+	const container = block && root.contains(block) ? block : root;
+	return /[{}]/u.test(container.textContent ?? '');
 }
 
 function mergeAdjacentAutomaticRuby(root: HTMLElement): void {
@@ -1095,11 +1217,13 @@ export default class CustomFuriganaPlugin extends Plugin {
 			if (status === 'error') new Notice(this.t('dictionaryError'));
 		});
 		void this.localDictionary.initialize();
+		this.app.workspace.onLayoutReady(() => this.refreshViews());
 	}
 
 	onunload(): void {
 		this.localDictionary?.destroy();
 		this.autoFurigana?.clear();
+		restoreGeneratedRuby(document);
 		document.body.classList.remove(
 			'custom-furigana-mode-hover',
 			'custom-furigana-mode-always',
@@ -1160,9 +1284,9 @@ export default class CustomFuriganaPlugin extends Plugin {
 	}
 
 	async saveAndApplySettings(): Promise<void> {
+		this.settingsRevision += 1;
 		await this.saveData(this.settings);
 		this.dictionaryCache.clear();
-		this.settingsRevision += 1;
 		this.applySettings();
 		this.updateModeButton();
 		this.refreshViews();
@@ -1221,28 +1345,30 @@ export default class CustomFuriganaPlugin extends Plugin {
 	}
 
 	private async processRenderedFurigana(root: HTMLElement): Promise<void> {
+		const renderRevision = this.settingsRevision;
+		unwrapAutomaticRuby(root);
+
 		for (const ruby of Array.from(root.querySelectorAll('ruby'))) {
-			if (ruby.classList.contains('custom-furigana-auto-ruby')) continue;
 			ruby.classList.add(
 				'custom-furigana-ruby',
 				'custom-furigana-manual-ruby',
 			);
 		}
 
-		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+		renderAuthoredRuby(root);
+
+		if (this.settings.mode !== 'dictionary') return;
+		const autoWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
 			acceptNode(node) {
 				const parent = node.parentElement;
 				const text = node.nodeValue;
-				if (
-					!parent ||
-					!text ||
-					(!text.includes('{') && !/\p{Script=Han}/u.test(text))
-				) {
+				if (!parent || !text || !/\p{Script=Han}/u.test(text)) {
 					return NodeFilter.FILTER_REJECT;
 				}
 				if (
+					renderedBlockContainsRawRuby(node, root) ||
 					parent.closest(
-						'code, pre, kbd, samp, script, style, textarea, input, ruby, rt, .math, .frontmatter',
+						RENDERED_TEXT_EXCLUSION_SELECTOR,
 					)
 				) {
 					return NodeFilter.FILTER_REJECT;
@@ -1250,57 +1376,41 @@ export default class CustomFuriganaPlugin extends Plugin {
 				return NodeFilter.FILTER_ACCEPT;
 			},
 		});
+		const autoNodes: Text[] = [];
+		while (autoWalker.nextNode()) autoNodes.push(autoWalker.currentNode as Text);
 
-		const nodes: Text[] = [];
-		while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-
-		for (const node of nodes) {
+		for (const node of autoNodes) {
+			if (renderRevision !== this.settingsRevision) return;
+			if (!node.parentNode) continue;
 			const text = node.nodeValue ?? '';
-			const manualMatches = extractRuby(text);
-			let automaticMatches: RubyMatch[] = [];
 			try {
-				if (this.settings.mode === 'dictionary') {
-					automaticMatches = (await this.autoFurigana.annotateText(text))
-						.map(autoMatchToRubyMatch)
-						.filter(
-							(match) =>
-								Boolean(
-									match.jlptLevel &&
-										this.settings.autoLevelEnabled[match.jlptLevel],
-								) &&
-								!manualMatches.some((manual) => overlaps(manual, match)),
-						);
+				const matches = (await this.autoFurigana.annotateText(text)).filter(
+					(match) => this.settings.autoLevelEnabled[match.jlptLevel],
+				);
+				if (
+					renderRevision !== this.settingsRevision ||
+					matches.length === 0 ||
+					!node.parentNode ||
+					node.nodeValue !== text ||
+					node.parentElement?.closest('ruby, rt')
+				) {
+					continue;
 				}
+
+				const fragment = createFragment();
+				let cursor = 0;
+				for (const match of matches) {
+					fragment.appendText(text.slice(cursor, match.start));
+					fragment.appendChild(
+						createRubyElement(autoMatchToRubyMatch(match)),
+					);
+					cursor = match.end;
+				}
+				fragment.appendText(text.slice(cursor));
+				node.parentNode.replaceChild(fragment, node);
 			} catch (error) {
 				console.warn('Custom Furigana automatic reading failed', error);
 			}
-
-			if (
-				!node.parentNode ||
-				node.nodeValue !== text ||
-				node.parentElement?.closest('ruby, rt')
-			) {
-				continue;
-			}
-
-			const matches = [...manualMatches, ...automaticMatches].sort(
-				(left, right) =>
-					left.start - right.start ||
-					Number(left.syntax === 'auto') - Number(right.syntax === 'auto') ||
-					right.end - left.end,
-			);
-			if (matches.length === 0) continue;
-
-			const fragment = createFragment();
-			let cursor = 0;
-			for (const match of matches) {
-				if (match.start < cursor) continue;
-				fragment.appendText(text.slice(cursor, match.start));
-				fragment.appendChild(createRubyElement(match));
-				cursor = match.end;
-			}
-			fragment.appendText(text.slice(cursor));
-			node.parentNode.replaceChild(fragment, node);
 		}
 
 		mergeAdjacentAutomaticRuby(root);

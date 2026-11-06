@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.7
+
+- Invalidates stale automatic-ruby work and fully rerenders Reading View when the display mode changes.
+- Recognizes authored ruby even when Obsidian splits `漢字{よみ}` across multiple inline DOM elements.
+- Prevents automatic ruby in blocks that still contain raw braces and restores generated markup when the plugin unloads.
+
 ## 4.0.6
 
 - Processes authored and automatic ruby in a single Reading View pass so authored readings always take priority.
