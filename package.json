@@ -1,0 +1,31 @@
+{
+  "name": "custom-furigana",
+  "version": "4.0.0",
+  "private": true,
+  "description": "Automatic and authored Japanese furigana with JLPT colors and local dictionaries.",
+  "author": "dnfto",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dnfto/custom-furigana.git"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+		"build:korean-dictionary": "node scripts/build-korean-dictionary.mjs",
+		"build:mobile-dictionary": "node scripts/build-mobile-dictionary.mjs",
+		"build:auto-readings": "node scripts/build-auto-readings.mjs",
+		"build:jlpt-levels": "node scripts/build-jlpt-levels.mjs",
+		"build:data-release": "node scripts/build-data-release.mjs",
+    "dev": "node esbuild.config.mjs"
+  },
+  "devDependencies": {
+		"@patdx/kuromoji": "1.0.4",
+    "@codemirror/language": "^6.10.8",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.36.5",
+    "esbuild": "^0.25.0",
+		"esbuild-plugin-inline-worker": "0.1.1",
+    "obsidian": "^1.8.7",
+    "typescript": "^5.8.2"
+  }
+}

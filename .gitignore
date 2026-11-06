@@ -1,0 +1,7 @@
+node_modules/
+main.js
+main.js.map
+data.json
+dict/
+release-data/
+.DS_Store
