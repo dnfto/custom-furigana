@@ -27,28 +27,28 @@ body:not(.theme-light):not(.theme-dark) ruby.custom-furigana-manual-ruby > rt {
 }
 
 ruby.custom-furigana-auto-ruby[data-jlpt="N5"] {
-	--custom-furigana-auto-light: var(--custom-furigana-light-n5-color, #2f9e44);
-	--custom-furigana-auto-dark: var(--custom-furigana-dark-n5-color, #69db7c);
+	--custom-furigana-auto-light: var(--custom-furigana-light-n5-color, #adadad);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n5-color, #adadad);
 }
 
 ruby.custom-furigana-auto-ruby[data-jlpt="N4"] {
-	--custom-furigana-auto-light: var(--custom-furigana-light-n4-color, #0c8599);
-	--custom-furigana-auto-dark: var(--custom-furigana-dark-n4-color, #66d9e8);
+	--custom-furigana-auto-light: var(--custom-furigana-light-n4-color, #84a98b);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n4-color, #84a98b);
 }
 
 ruby.custom-furigana-auto-ruby[data-jlpt="N3"] {
-	--custom-furigana-auto-light: var(--custom-furigana-light-n3-color, #1971c2);
-	--custom-furigana-auto-dark: var(--custom-furigana-dark-n3-color, #74c0fc);
+	--custom-furigana-auto-light: var(--custom-furigana-light-n3-color, #ffe1ad);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n3-color, #ffe1ad);
 }
 
 ruby.custom-furigana-auto-ruby[data-jlpt="N2"] {
-	--custom-furigana-auto-light: var(--custom-furigana-light-n2-color, #e67700);
-	--custom-furigana-auto-dark: var(--custom-furigana-dark-n2-color, #ffc078);
+	--custom-furigana-auto-light: var(--custom-furigana-light-n2-color, #93c0c8);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n2-color, #ffd6d6);
 }
 
 ruby.custom-furigana-auto-ruby[data-jlpt="N1"] {
-	--custom-furigana-auto-light: var(--custom-furigana-light-n1-color, #c92a2a);
-	--custom-furigana-auto-dark: var(--custom-furigana-dark-n1-color, #ff8787);
+	--custom-furigana-auto-light: var(--custom-furigana-light-n1-color, #1971c2);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n1-color, #e794a7);
 }
 
 ruby.custom-furigana-auto-ruby[data-jlpt="unlisted"] {

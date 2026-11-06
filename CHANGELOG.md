@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.4
+
+- Prefers OpenJLPT's verified vocabulary readings before automatic-reading shards.
+- Ensures registered compounds such as `低下` use their word reading (`ていか`) instead of separate kanji readings (`ひく` + `した`).
+- Updated the default JLPT colors for Light and Dark themes.
+
 ## 4.0.3
 
 - Uses exact OpenJLPT vocabulary levels before falling back to kanji levels, so common words such as `自分` are classified correctly.

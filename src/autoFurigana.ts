@@ -1,7 +1,12 @@
 import { Platform, type Plugin } from 'obsidian';
 
 import { normalizeKana } from './dictionaryCandidates';
-import { jlptLevelForText, type JlptLevel } from './jlptLevels';
+import {
+	jlptLevelForText,
+	jlptReadingForText,
+	MAX_JLPT_VOCABULARY_LENGTH,
+	type JlptLevel,
+} from './jlptLevels';
 import { ensureDataFile } from './remoteData';
 
 export interface AutoRubyMatch {
@@ -191,6 +196,16 @@ export class AutoFuriganaEngine {
 
 	private async lookupLongestPrefix(value: string): Promise<[string, string] | null> {
 		if (!value) return null;
+		const vocabularyCharacters = [...value].slice(
+			0,
+			MAX_JLPT_VOCABULARY_LENGTH,
+		);
+		for (let length = vocabularyCharacters.length; length > 1; length -= 1) {
+			const surface = vocabularyCharacters.slice(0, length).join('');
+			const reading = jlptReadingForText(surface);
+			if (reading && HAS_KANJI.test(surface)) return [surface, reading];
+		}
+
 		const shard = await this.loadShard(shardIndex(value));
 		const characters = [...value].slice(0, shard.maxLength);
 		for (let length = characters.length; length > 0; length -= 1) {

@@ -19,7 +19,7 @@ for (const level of levels) {
 	);
 	for (const entry of vocabularyEntries) {
 		if (!/\p{Script=Han}/u.test(entry.word) || vocabulary.has(entry.word)) continue;
-		vocabulary.set(entry.word, level);
+		vocabulary.set(entry.word, { level, reading: entry.reading });
 	}
 
 	const kanjiEntries = JSON.parse(
@@ -30,27 +30,48 @@ for (const level of levels) {
 	}
 }
 
-function recordLines(entries) {
+function kanjiRecordLines(entries) {
 	return [...entries]
 		.sort(([left], [right]) => left.localeCompare(right, 'ja'))
 		.map(([text, level]) => `\t${JSON.stringify(text)}: ${level},`)
 		.join('\n');
 }
 
+function vocabularyRecordLines(entries) {
+	return [...entries]
+		.sort(([left], [right]) => left.localeCompare(right, 'ja'))
+		.map(
+			([text, value]) =>
+				`\t${JSON.stringify(text)}: [${value.level}, ${JSON.stringify(value.reading)}],`,
+		)
+		.join('\n');
+}
+
+const maxVocabularyLength = Math.max(
+	0,
+	...[...vocabulary.keys()].map((word) => [...word].length),
+);
+
 const output = `// Generated from OpenJLPT 0.3.0 (CC BY-SA 4.0).
 // Source revision: 0d1d3410bec90bd4098a7c72de820543cb4f707c
 export type JlptLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | 'unlisted';
 
-const JLPT_VOCABULARY_LEVELS: Record<string, 1 | 2 | 3 | 4 | 5> = {
-${recordLines(vocabulary)}
+const JLPT_VOCABULARY: Record<string, readonly [1 | 2 | 3 | 4 | 5, string]> = {
+${vocabularyRecordLines(vocabulary)}
 };
 
 const JLPT_KANJI_LEVELS: Record<string, 1 | 2 | 3 | 4 | 5> = {
-${recordLines(kanji)}
+${kanjiRecordLines(kanji)}
 };
 
+export const MAX_JLPT_VOCABULARY_LENGTH = ${maxVocabularyLength};
+
+export function jlptReadingForText(text: string): string | null {
+	return JLPT_VOCABULARY[text]?.[1] ?? null;
+}
+
 export function jlptLevelForText(text: string): JlptLevel {
-	const vocabularyLevel = JLPT_VOCABULARY_LEVELS[text];
+	const vocabularyLevel = JLPT_VOCABULARY[text]?.[0];
 	if (vocabularyLevel) return \`N\${vocabularyLevel}\` as JlptLevel;
 
 	let hardest: 1 | 2 | 3 | 4 | 5 | null = null;

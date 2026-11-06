@@ -42,19 +42,19 @@ type RubySource = RubySyntax | 'auto';
 
 const JLPT_LEVELS: JlptLevel[] = ['N5', 'N4', 'N3', 'N2', 'N1', 'unlisted'];
 const DEFAULT_LIGHT_AUTO_COLORS: Record<JlptLevel, string> = {
-	N5: '#2f9e44',
-	N4: '#0c8599',
-	N3: '#1971c2',
-	N2: '#e67700',
-	N1: '#c92a2a',
+	N5: '#adadad',
+	N4: '#84a98b',
+	N3: '#ffe1ad',
+	N2: '#93c0c8',
+	N1: '#1971c2',
 	unlisted: '#7048e8',
 };
 const DEFAULT_DARK_AUTO_COLORS: Record<JlptLevel, string> = {
-	N5: '#69db7c',
-	N4: '#66d9e8',
-	N3: '#74c0fc',
-	N2: '#ffc078',
-	N1: '#ff8787',
+	N5: '#adadad',
+	N4: '#84a98b',
+	N3: '#ffe1ad',
+	N2: '#ffd6d6',
+	N1: '#e794a7',
 	unlisted: '#b197fc',
 };
 const JLPT_LABEL_KEYS: Record<JlptLevel, TranslationKey> = {
