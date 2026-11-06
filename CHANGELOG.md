@@ -6,6 +6,7 @@
 - Added build provenance attestations for release assets.
 - Made English the primary README while retaining Korean and Japanese translations.
 - Improved dictionary worker type safety and resolved scanner lint warnings.
+- Limited automatic ruby to kanji spans while preserving okurigana, including contextual readings for `来た`, `来ます`, and related forms.
 
 ## 4.0.0
 
