@@ -321,6 +321,50 @@ function automaticRubyBase(node: ChildNode | null): string | null {
 	return base || null;
 }
 
+function generatedRubySource(ruby: HTMLElement): string {
+	const base = automaticRubyBase(ruby) ?? Array.from(ruby.childNodes)
+		.filter(
+			(child) =>
+				!(child instanceof HTMLElement && child.tagName === 'RT'),
+		)
+		.map((child) => child.textContent ?? '')
+		.join('');
+	const reading = ruby.querySelector(':scope > rt')?.textContent ?? '';
+	const syntax = ruby.dataset.syntax as RubySource | undefined;
+	if (syntax === 'auto') return base;
+	if (syntax === 'advanced') return `{${base}|${reading}}`;
+	return `${base}{${reading}}`;
+}
+
+function renderedSourceSignature(root: HTMLElement, revision: number): string {
+	let hash = 0x811c9dc5;
+	let length = 0;
+	const append = (value: string): void => {
+		for (let index = 0; index < value.length; index += 1) {
+			hash ^= value.charCodeAt(index);
+			hash = Math.imul(hash, 0x01000193);
+			length += 1;
+		}
+	};
+	const visit = (node: Node): void => {
+		if (node.nodeType === Node.TEXT_NODE) {
+			append(node.nodeValue ?? '');
+			return;
+		}
+		if (
+			node instanceof HTMLElement &&
+			node.matches('ruby.custom-furigana-ruby[data-syntax]')
+		) {
+			append(generatedRubySource(node));
+			return;
+		}
+		if (node instanceof HTMLElement && node.matches('br, hr')) append('\n');
+		for (const child of Array.from(node.childNodes)) visit(child);
+	};
+	visit(root);
+	return `${revision}:${length}:${hash >>> 0}`;
+}
+
 function unwrapAutomaticRuby(root: HTMLElement): void {
 	const parents = new Set<ParentNode>();
 	for (const ruby of Array.from(
@@ -344,23 +388,8 @@ function restoreGeneratedRuby(root: ParentNode): void {
 		),
 	)) {
 		if (!ruby.parentNode) continue;
-		const base = automaticRubyBase(ruby) ?? Array.from(ruby.childNodes)
-			.filter(
-				(child) =>
-					!(child instanceof HTMLElement && child.tagName === 'RT'),
-			)
-			.map((child) => child.textContent ?? '')
-			.join('');
-		const reading = ruby.querySelector(':scope > rt')?.textContent ?? '';
-		const syntax = ruby.dataset.syntax as RubySource | undefined;
-		const source =
-			syntax === 'auto'
-				? base
-				: syntax === 'advanced'
-					? `{${base}|${reading}}`
-					: `${base}{${reading}}`;
 		const parent = ruby.parentNode;
-		parent.replaceChild(document.createTextNode(source), ruby);
+		parent.replaceChild(document.createTextNode(generatedRubySource(ruby)), ruby);
 		parents.add(parent);
 	}
 	for (const parent of parents) parent.normalize();
@@ -1043,6 +1072,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private localDictionary!: LocalDictionary;
 	private settingTab!: CustomFuriganaSettingTab;
 	private ribbonButton: HTMLElement | null = null;
+	private readingViewTimer: number | null = null;
+	private readingViewObserver: MutationObserver | null = null;
+	private readonly readingViewSignatures = new WeakMap<HTMLElement, string>();
+	private readonly readingViewsInProgress = new WeakSet<HTMLElement>();
 	private readonly localizedCommands: Array<{
 		command: Command;
 		nameKey: TranslationKey;
@@ -1175,10 +1208,35 @@ export default class CustomFuriganaPlugin extends Plugin {
 			if (status === 'error') new Notice(this.t('dictionaryError'));
 		});
 		void this.localDictionary.initialize();
-		this.app.workspace.onLayoutReady(() => this.refreshViews());
+		this.registerDomEvent(
+			document,
+			'scroll',
+			() => this.queueReadingViewProcessing(),
+			true,
+		);
+		this.registerEvent(
+			this.app.workspace.on('active-leaf-change', () =>
+				this.queueReadingViewProcessing(),
+			),
+		);
+		this.registerEvent(
+			this.app.workspace.on('file-open', () =>
+				this.queueReadingViewProcessing(),
+			),
+		);
+		this.app.workspace.onLayoutReady(() => {
+			this.startReadingViewObserver();
+			this.refreshViews();
+		});
 	}
 
 	onunload(): void {
+		if (this.readingViewTimer !== null) {
+			window.clearTimeout(this.readingViewTimer);
+			this.readingViewTimer = null;
+		}
+		this.readingViewObserver?.disconnect();
+		this.readingViewObserver = null;
 		this.localDictionary?.destroy();
 		this.autoFurigana?.clear();
 		restoreGeneratedRuby(document);
@@ -1299,6 +1357,69 @@ export default class CustomFuriganaPlugin extends Plugin {
 			const editorView = view.editor?.cm;
 			editorView?.dispatch({});
 			view.previewMode?.rerender?.(true);
+		}
+		this.queueReadingViewProcessing();
+	}
+
+	private startReadingViewObserver(): void {
+		this.readingViewObserver?.disconnect();
+		this.readingViewObserver = new MutationObserver((mutations) => {
+			if (
+				mutations.some((mutation) => {
+					const element =
+						mutation.target instanceof HTMLElement
+							? mutation.target
+							: mutation.target.parentElement;
+					return Boolean(element?.closest('.markdown-preview-view'));
+				})
+			) {
+				this.queueReadingViewProcessing();
+			}
+		});
+		this.readingViewObserver.observe(document.body, {
+			childList: true,
+			characterData: true,
+			subtree: true,
+		});
+	}
+
+	private queueReadingViewProcessing(): void {
+		if (this.readingViewTimer !== null) return;
+		this.readingViewTimer = window.setTimeout(() => {
+			this.readingViewTimer = null;
+			void this.processReadingViews();
+		}, 80);
+	}
+
+	private async processReadingViews(): Promise<void> {
+		await Promise.all(
+			Array.from(
+				document.querySelectorAll<HTMLElement>('.markdown-preview-view'),
+			).map((view) => this.processReadingView(view)),
+		);
+	}
+
+	private async processReadingView(view: HTMLElement): Promise<void> {
+		if (this.readingViewsInProgress.has(view)) return;
+		const revision = this.settingsRevision;
+		const signature = renderedSourceSignature(view, revision);
+		if (this.readingViewSignatures.get(view) === signature) return;
+
+		this.readingViewsInProgress.add(view);
+		try {
+			await this.processRenderedFurigana(view);
+		} finally {
+			this.readingViewsInProgress.delete(view);
+			const finalSignature = renderedSourceSignature(
+				view,
+				this.settingsRevision,
+			);
+			if (revision === this.settingsRevision && finalSignature === signature) {
+				this.readingViewSignatures.set(view, finalSignature);
+			} else {
+				this.readingViewSignatures.delete(view);
+				this.queueReadingViewProcessing();
+			}
 		}
 	}
 
