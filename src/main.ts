@@ -20,6 +20,8 @@ import {
 	Plugin,
 	PluginSettingTab,
 	Setting,
+	type SettingDefinition,
+	type SettingDefinitionItem,
 } from 'obsidian';
 
 import { AutoFuriganaEngine, type AutoRubyMatch } from './autoFurigana';
@@ -30,7 +32,11 @@ import {
 	type DictionaryCandidate,
 } from './dictionaryCandidates';
 import { translate, type TranslationKey, type UiLanguage } from './i18n';
-import { type JlptLevel } from './jlptLevels';
+import {
+	jlptLevelForText,
+	jlptReadingForText,
+	type JlptLevel,
+} from './jlptLevels';
 import {
 	LocalDictionary,
 	type DictionaryStatus,
@@ -295,6 +301,66 @@ function createRubyElement(
 	ruby.appendText(match.base);
 	ruby.createEl('rt', { text: match.reading });
 	return ruby;
+}
+
+function automaticRubyBase(node: ChildNode | null): string | null {
+	if (!(node instanceof HTMLElement)) return null;
+	if (!node.matches('ruby.custom-furigana-auto-ruby')) return null;
+	let base = '';
+	for (const child of Array.from(node.childNodes)) {
+		if (child instanceof HTMLElement && child.tagName === 'RT') continue;
+		base += child.textContent ?? '';
+	}
+	return base || null;
+}
+
+function mergeAdjacentAutomaticRuby(root: HTMLElement): void {
+	const parents = new Set<ParentNode>();
+	for (const ruby of Array.from(
+		root.querySelectorAll('ruby.custom-furigana-auto-ruby'),
+	)) {
+		if (ruby.parentNode) parents.add(ruby.parentNode);
+	}
+
+	for (const parent of parents) {
+		let node: ChildNode | null = parent.firstChild;
+		while (node) {
+			const firstBase = automaticRubyBase(node);
+			if (!firstBase) {
+				node = node.nextSibling;
+				continue;
+			}
+
+			const sequence: ChildNode[] = [node];
+			let surface = firstBase;
+			let best: { count: number; base: string; reading: string } | null = null;
+			let cursor = node.nextSibling;
+			while (cursor) {
+				const base = automaticRubyBase(cursor);
+				if (!base) break;
+				sequence.push(cursor);
+				surface += base;
+				const reading = jlptReadingForText(surface);
+				if (reading) best = { count: sequence.length, base: surface, reading };
+				cursor = cursor.nextSibling;
+			}
+
+			if (!best || best.count < 2) {
+				node = node.nextSibling;
+				continue;
+			}
+
+			const merged = createRubyElement({
+				base: best.base,
+				reading: best.reading,
+				syntax: 'auto',
+				jlptLevel: jlptLevelForText(best.base),
+			});
+			parent.insertBefore(merged, node);
+			for (const item of sequence.slice(0, best.count)) item.remove();
+			node = merged.nextSibling;
+		}
+	}
 }
 
 class FuriganaWidget extends WidgetType {
@@ -680,206 +746,212 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 		super(plugin.app, plugin);
 	}
 
-	private addColorSetting(
-		containerEl: HTMLElement,
-		name: string,
-		description: string,
-		value: string,
-		defaultValue: string,
-		onChange: (value: string) => void,
-		onReset: () => void,
-	): void {
-		new Setting(containerEl)
-			.setName(name)
-			.setDesc(description)
-			.addColorPicker((picker) =>
-				picker.setValue(value || defaultValue).onChange(async (color) => {
-					onChange(color);
-					await this.plugin.saveAndApplySettings();
-				}),
-			)
-			.addExtraButton((button) =>
-				button
-					.setIcon('reset')
-					.setTooltip(this.plugin.t('resetColor'))
-					.onClick(async () => {
-						onReset();
-						await this.plugin.saveAndApplySettings();
-						this.display();
-					}),
-			);
-	}
-
-	private addThemeColors(
-		containerEl: HTMLElement,
-		theme: 'light' | 'dark',
-	): void {
+	private colorDefinitions(theme: 'light' | 'dark'): SettingDefinition[] {
 		const colors =
 			theme === 'light'
 				? this.plugin.settings.lightAutoColors
 				: this.plugin.settings.darkAutoColors;
 		const defaults =
 			theme === 'light' ? DEFAULT_LIGHT_AUTO_COLORS : DEFAULT_DARK_AUTO_COLORS;
-		const manualColor =
-			theme === 'light'
-				? this.plugin.settings.lightRubyColor
-				: this.plugin.settings.darkRubyColor;
-
-		new Setting(containerEl)
-			.setName(this.plugin.t(theme === 'light' ? 'lightModeColors' : 'darkModeColors'))
-			.setHeading();
-		this.addColorSetting(
-			containerEl,
-			this.plugin.t('manualRubyColor'),
-			this.plugin.t('rubyColorDesc'),
-			manualColor,
-			currentAccentHex(),
-			(value) => {
-				if (theme === 'light') this.plugin.settings.lightRubyColor = value;
-				else this.plugin.settings.darkRubyColor = value;
-			},
-			() => {
-				if (theme === 'light') this.plugin.settings.lightRubyColor = '';
-				else this.plugin.settings.darkRubyColor = '';
-			},
-		);
-
-		for (const level of JLPT_LEVELS) {
-			this.addColorSetting(
-				containerEl,
-				this.plugin.t('autoRubyColor', {
-					level: this.plugin.t(JLPT_LABEL_KEYS[level]),
-				}),
-				this.plugin.t('autoRubyColorDesc'),
-				colors[level],
-				defaults[level],
-				(value) => {
-					colors[level] = value;
-				},
-				() => {
-					colors[level] = defaults[level];
-				},
-			);
-		}
-	}
-
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
-		new Setting(containerEl)
-			.setName(this.plugin.t('settingsTitle'))
-			.setHeading();
-
-		new Setting(containerEl)
-			.setName(this.plugin.t('language'))
-			.setDesc(this.plugin.t('languageDesc'))
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption('ko', this.plugin.t('languageKo'))
-					.addOption('en', this.plugin.t('languageEn'))
-					.addOption('ja', this.plugin.t('languageJa'))
-					.setValue(this.plugin.settings.uiLanguage)
-					.onChange(async (value) => {
-						this.plugin.settings.uiLanguage = value as UiLanguage;
-						await this.plugin.saveAndApplySettings();
-						this.plugin.updateCommandNames();
-						this.display();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(this.plugin.t('display'))
-			.setDesc(this.plugin.t('displayDesc'))
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption('dictionary', this.plugin.t('modeDictionary'))
-					.addOption('visible', this.plugin.t('modeVisible'))
-					.addOption('hidden', this.plugin.t('modeHidden'))
-					.setValue(this.plugin.settings.mode)
-					.onChange(async (value) => {
-						this.plugin.settings.mode = value as FuriganaMode;
-						await this.plugin.saveAndApplySettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(this.plugin.t('rubySize'))
-			.setDesc(this.plugin.t('rubySizeDesc'))
-			.addText((text) =>
-				text
-					.setPlaceholder('12px / 0.55em')
-					.setValue(this.plugin.settings.rubySize)
-					.onChange(async (value) => {
-						const normalized = normalizeRubySize(value);
-						text.inputEl.setCustomValidity(
-							normalized ? '' : this.plugin.t('rubySizeInvalid'),
-						);
-						if (!normalized) return;
-						this.plugin.settings.rubySize = normalized;
-						await this.plugin.saveAndApplySettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName(this.plugin.t('automaticFurigana'))
-			.setDesc(this.plugin.t('automaticFuriganaDesc'))
-			.setHeading();
-		for (const level of JLPT_LEVELS) {
-			new Setting(containerEl)
-				.setName(
-					this.plugin.t('autoLevelToggle', {
-						level: this.plugin.t(JLPT_LABEL_KEYS[level]),
-					}),
-				)
-				.setDesc(this.plugin.t('autoLevelToggleDesc'))
-				.addToggle((toggle) =>
-					toggle
-						.setValue(this.plugin.settings.autoLevelEnabled[level])
-						.onChange(async (value) => {
-							this.plugin.settings.autoLevelEnabled[level] = value;
+		const manual: SettingDefinition = {
+			name: this.plugin.t('manualRubyColor'),
+			desc: this.plugin.t('rubyColorDesc'),
+			render: (setting) => {
+				const value =
+					theme === 'light'
+						? this.plugin.settings.lightRubyColor
+						: this.plugin.settings.darkRubyColor;
+				setting
+					.addColorPicker((picker) =>
+						picker.setValue(value || currentAccentHex()).onChange(async (color) => {
+							if (theme === 'light') this.plugin.settings.lightRubyColor = color;
+							else this.plugin.settings.darkRubyColor = color;
 							await this.plugin.saveAndApplySettings();
 						}),
-				);
-		}
+					)
+					.addExtraButton((button) =>
+						button
+							.setIcon('reset')
+							.setTooltip(this.plugin.t('resetColor'))
+							.onClick(async () => {
+								if (theme === 'light') this.plugin.settings.lightRubyColor = '';
+								else this.plugin.settings.darkRubyColor = '';
+								await this.plugin.saveAndApplySettings();
+								this.update();
+							}),
+					);
+			},
+		};
 
-		new Setting(containerEl)
-			.setName(this.plugin.t('rubyColors'))
-			.setHeading();
-		this.addThemeColors(containerEl, 'light');
-		this.addThemeColors(containerEl, 'dark');
+		return [
+			manual,
+			...JLPT_LEVELS.map<SettingDefinition>((level) => ({
+				name: this.plugin.t('autoRubyColor', {
+					level: this.plugin.t(JLPT_LABEL_KEYS[level]),
+				}),
+				desc: this.plugin.t('autoRubyColorDesc'),
+				render: (setting) => {
+					setting
+						.addColorPicker((picker) =>
+							picker.setValue(colors[level]).onChange(async (color) => {
+								colors[level] = color;
+								await this.plugin.saveAndApplySettings();
+							}),
+						)
+						.addExtraButton((button) =>
+							button
+								.setIcon('reset')
+								.setTooltip(this.plugin.t('resetColor'))
+								.onClick(async () => {
+									colors[level] = defaults[level];
+									await this.plugin.saveAndApplySettings();
+									this.update();
+								}),
+						);
+				},
+			})),
+		];
+	}
 
-		new Setting(containerEl)
-			.setName(this.plugin.t('livePreview'))
-			.setDesc(this.plugin.t('livePreviewDesc'))
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.livePreview)
-					.onChange(async (value) => {
-						this.plugin.settings.livePreview = value;
-						await this.plugin.saveAndApplySettings();
-					}),
-			);
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		const automaticLevelDefinitions = JLPT_LEVELS.map<SettingDefinition>(
+			(level) => ({
+				name: this.plugin.t('autoLevelToggle', {
+					level: this.plugin.t(JLPT_LABEL_KEYS[level]),
+				}),
+				desc: this.plugin.t('autoLevelToggleDesc'),
+				render: (setting) => {
+					setting.addToggle((toggle) =>
+						toggle
+							.setValue(this.plugin.settings.autoLevelEnabled[level])
+							.onChange(async (value) => {
+								this.plugin.settings.autoLevelEnabled[level] = value;
+								await this.plugin.saveAndApplySettings();
+							}),
+					);
+				},
+			}),
+		);
 
-		new Setting(containerEl)
-			.setName(this.plugin.t('dictionary'))
-			.setDesc(this.plugin.t('dictionaryDesc'))
-			.setHeading();
-
-		new Setting(containerEl)
-			.setName(this.plugin.t('dictionaryStatus'))
-			.setDesc(this.plugin.dictionaryStatusText());
-
-		new Setting(containerEl)
-			.setName(this.plugin.t('resultCount'))
-			.addSlider((slider) =>
-				slider
-					.setLimits(5, 30, 1)
-					.setValue(this.plugin.settings.maxDictionaryResults)
-					.onChange(async (value) => {
-						this.plugin.settings.maxDictionaryResults = value;
-						await this.plugin.saveAndApplySettings();
-					}),
-			);
+		return [
+			{
+				type: 'group',
+				heading: this.plugin.t('settingsTitle'),
+				items: [
+					{
+						name: this.plugin.t('language'),
+						desc: this.plugin.t('languageDesc'),
+						render: (setting) => {
+							setting.addDropdown((dropdown) =>
+								dropdown
+									.addOption('ko', this.plugin.t('languageKo'))
+									.addOption('en', this.plugin.t('languageEn'))
+									.addOption('ja', this.plugin.t('languageJa'))
+									.setValue(this.plugin.settings.uiLanguage)
+									.onChange(async (value) => {
+										this.plugin.settings.uiLanguage = value as UiLanguage;
+										await this.plugin.saveAndApplySettings();
+										this.plugin.updateCommandNames();
+										this.update();
+									}),
+							);
+						},
+					},
+					{
+						name: this.plugin.t('display'),
+						desc: this.plugin.t('displayDesc'),
+						render: (setting) => {
+							setting.addDropdown((dropdown) =>
+								dropdown
+									.addOption('dictionary', this.plugin.t('modeDictionary'))
+									.addOption('visible', this.plugin.t('modeVisible'))
+									.addOption('hidden', this.plugin.t('modeHidden'))
+									.setValue(this.plugin.settings.mode)
+									.onChange(async (value) => {
+										this.plugin.settings.mode = value as FuriganaMode;
+										await this.plugin.saveAndApplySettings();
+									}),
+							);
+						},
+					},
+					{
+						name: this.plugin.t('rubySize'),
+						desc: this.plugin.t('rubySizeDesc'),
+						render: (setting) => {
+							setting.addText((text) =>
+								text
+									.setPlaceholder('12px / 0.55em')
+									.setValue(this.plugin.settings.rubySize)
+									.onChange(async (value) => {
+										const normalized = normalizeRubySize(value);
+										text.inputEl.setCustomValidity(
+											normalized ? '' : this.plugin.t('rubySizeInvalid'),
+										);
+										if (!normalized) return;
+										this.plugin.settings.rubySize = normalized;
+										await this.plugin.saveAndApplySettings();
+									}),
+							);
+						},
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: this.plugin.t('automaticFurigana'),
+				items: [
+					...automaticLevelDefinitions,
+					{
+						name: this.plugin.t('livePreview'),
+						desc: this.plugin.t('livePreviewDesc'),
+						render: (setting) => {
+							setting.addToggle((toggle) =>
+								toggle
+									.setValue(this.plugin.settings.livePreview)
+									.onChange(async (value) => {
+										this.plugin.settings.livePreview = value;
+										await this.plugin.saveAndApplySettings();
+									}),
+							);
+						},
+					},
+				],
+			},
+			{
+				type: 'group',
+				heading: this.plugin.t('lightModeColors'),
+				items: this.colorDefinitions('light'),
+			},
+			{
+				type: 'group',
+				heading: this.plugin.t('darkModeColors'),
+				items: this.colorDefinitions('dark'),
+			},
+			{
+				type: 'group',
+				heading: this.plugin.t('dictionary'),
+				items: [
+					{
+						name: this.plugin.t('dictionaryStatus'),
+						desc: this.plugin.dictionaryStatusText(),
+					},
+					{
+						name: this.plugin.t('resultCount'),
+						render: (setting) => {
+							setting.addSlider((slider) =>
+								slider
+									.setLimits(5, 30, 1)
+									.setValue(this.plugin.settings.maxDictionaryResults)
+									.onChange(async (value) => {
+										this.plugin.settings.maxDictionaryResults = value;
+										await this.plugin.saveAndApplySettings();
+									}),
+							);
+						},
+					},
+				],
+			},
+		];
 	}
 }
 
@@ -1018,7 +1090,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 
 		this.localDictionary = new LocalDictionary(this, (status) => {
 			this.dictionaryCache.clear();
-			if (this.settingTab?.containerEl.isConnected) this.settingTab.display();
+			if (this.settingTab?.containerEl.isConnected) this.settingTab.update();
 			if (status === 'ready') new Notice(this.t('dictionaryReady'));
 			if (status === 'error') new Notice(this.t('dictionaryError'));
 		});
@@ -1218,7 +1290,14 @@ export default class CustomFuriganaPlugin extends Plugin {
 				const matches = (await this.autoFurigana.annotateText(text)).filter(
 					(match) => this.settings.autoLevelEnabled[match.jlptLevel],
 				);
-				if (matches.length === 0 || !node.parentNode) continue;
+				if (
+					matches.length === 0 ||
+					!node.parentNode ||
+					node.nodeValue !== text ||
+					node.parentElement?.closest('ruby, rt')
+				) {
+					continue;
+				}
 				const fragment = createFragment();
 				let cursor = 0;
 				for (const match of matches) {
@@ -1234,6 +1313,8 @@ export default class CustomFuriganaPlugin extends Plugin {
 				console.warn('Custom Furigana automatic reading failed', error);
 			}
 		}
+
+		mergeAdjacentAutomaticRuby(root);
 	}
 
 	private openModeMenu(event: MouseEvent): void {
