@@ -132,6 +132,52 @@ function contextualReading(
 	return null;
 }
 
+export function mergeCompoundAutomaticMatches(
+	matches: AutoRubyMatch[],
+): AutoRubyMatch[] {
+	const sorted = [...matches].sort((left, right) => left.start - right.start);
+	const merged: AutoRubyMatch[] = [];
+
+	for (let index = 0; index < sorted.length; index += 1) {
+		const first = sorted[index];
+		let surface = first.base;
+		let best:
+			| { endIndex: number; surface: string; reading: string; level: JlptLevel }
+			| undefined;
+
+		for (let endIndex = index + 1; endIndex < sorted.length; endIndex += 1) {
+			const previous = sorted[endIndex - 1];
+			const next = sorted[endIndex];
+			if (previous.end !== next.start) break;
+			surface += next.base;
+			const reading = jlptReadingForText(surface);
+			if (!reading) continue;
+			best = {
+				endIndex,
+				surface,
+				reading,
+				level: jlptLevelForText(surface),
+			};
+		}
+
+		if (!best) {
+			merged.push(first);
+			continue;
+		}
+
+		merged.push({
+			start: first.start,
+			end: sorted[best.endIndex].end,
+			base: best.surface,
+			reading: best.reading,
+			jlptLevel: best.level,
+		});
+		index = best.endIndex;
+	}
+
+	return merged;
+}
+
 export class AutoFuriganaEngine {
 	private readonly cache = new Map<number, AutoReadingShard>();
 	private readonly pending = new Map<number, Promise<AutoReadingShard>>();
@@ -149,7 +195,7 @@ export class AutoFuriganaEngine {
 				)),
 			);
 		}
-		return matches;
+		return mergeCompoundAutomaticMatches(matches);
 	}
 
 	clear(): void {

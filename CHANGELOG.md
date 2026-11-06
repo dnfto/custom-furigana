@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.6
+
+- Processes authored and automatic ruby in a single Reading View pass so authored readings always take priority.
+- Coalesces split automatic readings back into verified vocabulary compounds before rendering, including `低下` (`ていか`).
+- Uses the requested N5–N1 default palette with separate Light and Dark colors for N2 and N1.
+
 ## 4.0.5
 
 - Merges late per-kanji Reading View ruby back into known compounds and prevents automatic ruby from replacing authored ruby such as `下{くだ}り坂`.

@@ -1232,7 +1232,14 @@ export default class CustomFuriganaPlugin extends Plugin {
 		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
 			acceptNode(node) {
 				const parent = node.parentElement;
-				if (!parent || !node.nodeValue?.includes('{')) return NodeFilter.FILTER_REJECT;
+				const text = node.nodeValue;
+				if (
+					!parent ||
+					!text ||
+					(!text.includes('{') && !/\p{Script=Han}/u.test(text))
+				) {
+					return NodeFilter.FILTER_REJECT;
+				}
 				if (
 					parent.closest(
 						'code, pre, kbd, samp, script, style, textarea, input, ruby, rt, .math, .frontmatter',
@@ -1249,69 +1256,51 @@ export default class CustomFuriganaPlugin extends Plugin {
 
 		for (const node of nodes) {
 			const text = node.nodeValue ?? '';
-			const matches = extractRuby(text);
+			const manualMatches = extractRuby(text);
+			let automaticMatches: RubyMatch[] = [];
+			try {
+				if (this.settings.mode === 'dictionary') {
+					automaticMatches = (await this.autoFurigana.annotateText(text))
+						.map(autoMatchToRubyMatch)
+						.filter(
+							(match) =>
+								Boolean(
+									match.jlptLevel &&
+										this.settings.autoLevelEnabled[match.jlptLevel],
+								) &&
+								!manualMatches.some((manual) => overlaps(manual, match)),
+						);
+				}
+			} catch (error) {
+				console.warn('Custom Furigana automatic reading failed', error);
+			}
+
+			if (
+				!node.parentNode ||
+				node.nodeValue !== text ||
+				node.parentElement?.closest('ruby, rt')
+			) {
+				continue;
+			}
+
+			const matches = [...manualMatches, ...automaticMatches].sort(
+				(left, right) =>
+					left.start - right.start ||
+					Number(left.syntax === 'auto') - Number(right.syntax === 'auto') ||
+					right.end - left.end,
+			);
 			if (matches.length === 0) continue;
 
 			const fragment = createFragment();
 			let cursor = 0;
 			for (const match of matches) {
+				if (match.start < cursor) continue;
 				fragment.appendText(text.slice(cursor, match.start));
 				fragment.appendChild(createRubyElement(match));
 				cursor = match.end;
 			}
 			fragment.appendText(text.slice(cursor));
-			node.parentNode?.replaceChild(fragment, node);
-		}
-
-		if (this.settings.mode !== 'dictionary') return;
-		const autoWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-			acceptNode(node) {
-				const parent = node.parentElement;
-				if (!parent || !node.nodeValue || !/\p{Script=Han}/u.test(node.nodeValue)) {
-					return NodeFilter.FILTER_REJECT;
-				}
-				if (
-					parent.closest(
-						'code, pre, kbd, samp, script, style, textarea, input, ruby, rt, .math, .frontmatter',
-					)
-				) {
-					return NodeFilter.FILTER_REJECT;
-				}
-				return NodeFilter.FILTER_ACCEPT;
-			},
-		});
-		const autoNodes: Text[] = [];
-		while (autoWalker.nextNode()) autoNodes.push(autoWalker.currentNode as Text);
-
-		for (const node of autoNodes) {
-			if (!node.parentNode) continue;
-			const text = node.nodeValue ?? '';
-			try {
-				const matches = (await this.autoFurigana.annotateText(text)).filter(
-					(match) => this.settings.autoLevelEnabled[match.jlptLevel],
-				);
-				if (
-					matches.length === 0 ||
-					!node.parentNode ||
-					node.nodeValue !== text ||
-					node.parentElement?.closest('ruby, rt')
-				) {
-					continue;
-				}
-				const fragment = createFragment();
-				let cursor = 0;
-				for (const match of matches) {
-					fragment.appendText(text.slice(cursor, match.start));
-					fragment.appendChild(
-						createRubyElement(autoMatchToRubyMatch(match)),
-					);
-					cursor = match.end;
-				}
-				fragment.appendText(text.slice(cursor));
-				node.parentNode.replaceChild(fragment, node);
-			} catch (error) {
-				console.warn('Custom Furigana automatic reading failed', error);
-			}
+			node.parentNode.replaceChild(fragment, node);
 		}
 
 		mergeAdjacentAutomaticRuby(root);
