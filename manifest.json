@@ -1,7 +1,7 @@
 {
     "id": "custom-furigana",
     "name": "Custom Furigana",
-    "version": "4.0.2",
+    "version": "4.0.3",
     "minAppVersion": "1.5.0",
     "description": "Add automatic and authored Japanese furigana with JLPT colors and local Korean-English dictionaries.",
     "author": "dnfto",

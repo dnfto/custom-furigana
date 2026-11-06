@@ -62,7 +62,7 @@
 - 韓国語版Wiktionaryの日本語項目 — Wiktionary contributors, CC BY-SA 4.0、Wiktextract/Kaikkiで抽出
 - SudachiDict由来の形態素解析データ — Works Applications, Apache License 2.0
 - `@patdx/kuromoji` — Apache License 2.0
-- `kanji-data` JLPTレベル — David Gouveia、MIT
+- OpenJLPT語彙・漢字レベル — OpenJLPT貢献者およびアップストリームソース、CC BY-SA 4.0
 
 ソースコードは [MIT License](LICENSE) で公開しています。辞書・形態素データに適用される別個のライセンスと帰属表示は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
 
@@ -81,5 +81,5 @@ npm run build
 npm run build:korean-dictionary -- /path/to/ko-extract.jsonl.gz dict/wiktionary-ja-ko-2026-10-01.json.gz
 npm run build:mobile-dictionary -- dict/jmdict-eng-3.6.2.json.gz dict/mobile
 npm run build:auto-readings -- node_modules/@patdx/kuromoji/dict dict/auto
-npm run build:jlpt-levels -- /path/to/kanji-data/kanji.json src/jlptLevels.ts
+npm run build:jlpt-levels -- /path/to/OpenJLPT/data/json src/jlptLevels.ts
 ```

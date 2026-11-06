@@ -40,30 +40,17 @@ and the resulting map is split into 64 gzip-compressed shards.
 
 - https://github.com/patdx/kuromoji.js
 
-## kanji-data JLPT levels
+## OpenJLPT vocabulary and kanji levels
 
-The generated `src/jlptLevels.ts` map uses the `jlpt_new` field from David
-Gouveia's `kanji-data` project. The plugin retains only kanji-to-level mappings
-and determines a word's display level from its hardest listed kanji.
+The generated `src/jlptLevels.ts` map uses vocabulary and kanji level
+assignments from OpenJLPT 0.3.0, revision
+`0d1d3410bec90bd4098a7c72de820543cb4f707c`. The plugin retains only Japanese
+spellings and N5–N1 assignments. Exact vocabulary levels take priority; words
+that are not in the vocabulary list fall back to the hardest listed kanji.
 
-Copyright © 2019 David Gouveia
+Contains data from OpenJLPT (CC BY-SA 4.0), which uses JMdict and KANJIDIC2
+(EDRDG), Jonathan Waller's JLPT lists, and Tatoeba. The generated level map is
+distributed under CC BY-SA 4.0.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-- https://github.com/davidluzgouveia/kanji-data
+- https://github.com/evanclan/OpenJLPT
+- https://creativecommons.org/licenses/by-sa/4.0/

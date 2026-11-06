@@ -1,22 +1,73 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-const [inputPath, outputPath] = process.argv.slice(2);
-if (!inputPath || !outputPath) {
+const [dataFolder, outputPath] = process.argv.slice(2);
+if (!dataFolder || !outputPath) {
 	console.error(
-		'Usage: node scripts/build-jlpt-levels.mjs <kanji-data.json> <output.ts>',
+		'Usage: node scripts/build-jlpt-levels.mjs <openjlpt-data/json> <output.ts>',
 	);
 	process.exit(1);
 }
 
-const source = JSON.parse(await readFile(inputPath, 'utf8'));
-const entries = Object.entries(source)
-	.filter(([, value]) =>
-		Number.isInteger(value.jlpt_new) && value.jlpt_new >= 1 && value.jlpt_new <= 5,
-	)
-	.sort(([left], [right]) => left.localeCompare(right, 'ja'));
-const lines = entries.map(
-	([kanji, value]) => `\t${JSON.stringify(kanji)}: ${value.jlpt_new},`,
-);
-const output = `// Generated from david luzgouveia/kanji-data (MIT).\nexport type JlptLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | 'unlisted';\n\nconst JLPT_KANJI_LEVELS: Record<string, 1 | 2 | 3 | 4 | 5> = {\n${lines.join('\n')}\n};\n\nexport function jlptLevelForText(text: string): JlptLevel {\n\tlet hardest: 1 | 2 | 3 | 4 | 5 | null = null;\n\tlet hasKanji = false;\n\tfor (const character of text) {\n\t\tif ('々〆ヶ'.includes(character)) continue;\n\t\tif (!/\\p{Script=Han}/u.test(character)) continue;\n\t\thasKanji = true;\n\t\tconst level = JLPT_KANJI_LEVELS[character];\n\t\tif (!level) return 'unlisted';\n\t\tif (hardest === null || level < hardest) hardest = level;\n\t}\n\treturn hasKanji && hardest !== null ? (\`N\${hardest}\` as JlptLevel) : 'unlisted';\n}\n`;
+const levels = [5, 4, 3, 2, 1];
+const vocabulary = new Map();
+const kanji = new Map();
+
+for (const level of levels) {
+	const vocabularyEntries = JSON.parse(
+		await readFile(join(dataFolder, 'vocab', `n${level}.json`), 'utf8'),
+	);
+	for (const entry of vocabularyEntries) {
+		if (!/\p{Script=Han}/u.test(entry.word) || vocabulary.has(entry.word)) continue;
+		vocabulary.set(entry.word, level);
+	}
+
+	const kanjiEntries = JSON.parse(
+		await readFile(join(dataFolder, 'kanji', `n${level}.json`), 'utf8'),
+	);
+	for (const entry of kanjiEntries) {
+		if (!kanji.has(entry.character)) kanji.set(entry.character, level);
+	}
+}
+
+function recordLines(entries) {
+	return [...entries]
+		.sort(([left], [right]) => left.localeCompare(right, 'ja'))
+		.map(([text, level]) => `\t${JSON.stringify(text)}: ${level},`)
+		.join('\n');
+}
+
+const output = `// Generated from OpenJLPT 0.3.0 (CC BY-SA 4.0).
+// Source revision: 0d1d3410bec90bd4098a7c72de820543cb4f707c
+export type JlptLevel = 'N5' | 'N4' | 'N3' | 'N2' | 'N1' | 'unlisted';
+
+const JLPT_VOCABULARY_LEVELS: Record<string, 1 | 2 | 3 | 4 | 5> = {
+${recordLines(vocabulary)}
+};
+
+const JLPT_KANJI_LEVELS: Record<string, 1 | 2 | 3 | 4 | 5> = {
+${recordLines(kanji)}
+};
+
+export function jlptLevelForText(text: string): JlptLevel {
+	const vocabularyLevel = JLPT_VOCABULARY_LEVELS[text];
+	if (vocabularyLevel) return \`N\${vocabularyLevel}\` as JlptLevel;
+
+	let hardest: 1 | 2 | 3 | 4 | 5 | null = null;
+	let hasKanji = false;
+	for (const character of text) {
+		if ('々〆ヶ'.includes(character)) continue;
+		if (!/\\p{Script=Han}/u.test(character)) continue;
+		hasKanji = true;
+		const level = JLPT_KANJI_LEVELS[character];
+		if (!level) return 'unlisted';
+		if (hardest === null || level < hardest) hardest = level;
+	}
+	return hasKanji && hardest !== null ? (\`N\${hardest}\` as JlptLevel) : 'unlisted';
+}
+`;
+
 await writeFile(outputPath, output);
-console.log(`Wrote ${entries.length} JLPT kanji entries to ${outputPath}`);
+console.log(
+	`Wrote ${vocabulary.size} JLPT vocabulary entries and ${kanji.size} kanji entries to ${outputPath}`,
+);

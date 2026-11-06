@@ -5,6 +5,7 @@ import { DATA_ASSETS, DATA_RELEASE_TAG } from './dataAssets';
 const RELEASE_BASE_URL =
 	`https://github.com/dnfto/custom-furigana/releases/download/${DATA_RELEASE_TAG}`;
 const pendingDownloads = new Map<string, Promise<void>>();
+const verifiedFiles = new Set<string>();
 
 function toHex(bytes: Uint8Array): string {
 	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -43,16 +44,34 @@ async function downloadDataFile(plugin: Plugin, relativePath: string): Promise<v
 		`${plugin.manifest.dir}/dict/${relativePath}`,
 		response.arrayBuffer,
 	);
+	verifiedFiles.add(`${plugin.manifest.id}:${relativePath}`);
 }
 
 export async function ensureDataFile(
 	plugin: Plugin,
 	relativePath: string,
+	verifyExisting = false,
 ): Promise<void> {
 	const target = `${plugin.manifest.dir}/dict/${relativePath}`;
-	if (await plugin.app.vault.adapter.exists(target)) return;
-
 	const key = `${plugin.manifest.id}:${relativePath}`;
+	if (await plugin.app.vault.adapter.exists(target)) {
+		if (!verifyExisting || verifiedFiles.has(key)) return;
+		try {
+			const record = DATA_ASSETS[relativePath];
+			if (!record) throw new Error(`Unknown dictionary data file: ${relativePath}`);
+			const existing = await plugin.app.vault.adapter.readBinary(target);
+			if ((await sha256(existing)) === record.sha256) {
+				verifiedFiles.add(key);
+				return;
+			}
+			console.warn(`Custom Furigana replacing stale data file: ${relativePath}`);
+		} catch (error) {
+			// Let the caller's existing read/retry path handle transient filesystem errors.
+			console.warn(`Custom Furigana could not verify ${relativePath}`, error);
+			return;
+		}
+	}
+
 	const inFlight = pendingDownloads.get(key);
 	if (inFlight) return inFlight;
 

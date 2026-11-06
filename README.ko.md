@@ -62,7 +62,7 @@
 - 한국어판 Wiktionary 일본어 항목 — Wiktionary contributors, CC BY-SA 4.0; Wiktextract/Kaikki로 추출
 - SudachiDict 기반 형태소 분석 데이터 — Works Applications, Apache License 2.0
 - `@patdx/kuromoji` — Apache License 2.0
-- `kanji-data` JLPT 급수 데이터 — David Gouveia, MIT
+- OpenJLPT 어휘·한자 급수 데이터 — OpenJLPT 기여자 및 원출처, CC BY-SA 4.0
 
 소스 코드는 [MIT License](LICENSE)로 공개합니다. 사전·형태소 데이터의 별도 라이선스와 귀속 정보는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고하세요.
 
@@ -81,5 +81,5 @@ npm run build
 npm run build:korean-dictionary -- /path/to/ko-extract.jsonl.gz dict/wiktionary-ja-ko-2026-10-01.json.gz
 npm run build:mobile-dictionary -- dict/jmdict-eng-3.6.2.json.gz dict/mobile
 npm run build:auto-readings -- node_modules/@patdx/kuromoji/dict dict/auto
-npm run build:jlpt-levels -- /path/to/kanji-data/kanji.json src/jlptLevels.ts
+npm run build:jlpt-levels -- /path/to/OpenJLPT/data/json src/jlptLevels.ts
 ```

@@ -75,6 +75,7 @@ export function alignAutomaticReading(
 	if (blocks.length === 0) return [];
 
 	const normalizedReading = normalizeKana(reading);
+	const jlptLevel = jlptLevelForText(surface);
 	let readingCursor = 0;
 	const leadingKana = normalizeKana(surface.slice(0, blocks[0].index ?? 0));
 	if (leadingKana) {
@@ -104,7 +105,7 @@ export function alignAutomaticReading(
 			end: offset + blockEnd,
 			base: block[0],
 			reading: blockReading,
-			jlptLevel: jlptLevelForText(block[0]),
+			jlptLevel,
 		});
 		readingCursor = readingEnd + kanaAnchor.length;
 	}
@@ -229,7 +230,7 @@ export class AutoFuriganaEngine {
 
 	private async readShard(index: number): Promise<AutoReadingShard> {
 		const relativePath = `auto/auto-${String(index).padStart(2, '0')}.json.gz`;
-		await ensureDataFile(this.plugin, relativePath);
+		await ensureDataFile(this.plugin, relativePath, true);
 		const path = `${this.plugin.manifest.dir}/dict/${relativePath}`;
 		let binaryData: ArrayBuffer;
 		try {

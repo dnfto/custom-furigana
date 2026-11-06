@@ -61,7 +61,7 @@ Desktop uses the full search index and tokenizer. On iPhone, iPad, and Android, 
 - Japanese entries from Korean Wiktionary — Wiktionary contributors, CC BY-SA 4.0; extracted with Wiktextract/Kaikki
 - SudachiDict-based tokenizer data — Works Applications, Apache License 2.0
 - `@patdx/kuromoji` — Apache License 2.0
-- `kanji-data` JLPT levels — David Gouveia, MIT
+- OpenJLPT vocabulary and kanji levels — OpenJLPT contributors and upstream sources, CC BY-SA 4.0
 
 The source code is available under the [MIT License](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the separate licenses, attribution, and transformation details that apply to dictionary and tokenizer data.
 
@@ -78,5 +78,5 @@ To rebuild the data files:
 npm run build:korean-dictionary -- /path/to/ko-extract.jsonl.gz dict/wiktionary-ja-ko-2026-10-01.json.gz
 npm run build:mobile-dictionary -- dict/jmdict-eng-3.6.2.json.gz dict/mobile
 npm run build:auto-readings -- node_modules/@patdx/kuromoji/dict dict/auto
-npm run build:jlpt-levels -- /path/to/kanji-data/kanji.json src/jlptLevels.ts
+npm run build:jlpt-levels -- /path/to/OpenJLPT/data/json src/jlptLevels.ts
 ```

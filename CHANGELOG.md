@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.3
+
+- Uses exact OpenJLPT vocabulary levels before falling back to kanji levels, so common words such as `自分` are classified correctly.
+- Replaced the incomplete kanji-level source with OpenJLPT's supplemented N5–N1 kanji data.
+- Verifies cached automatic-reading shards and replaces stale files, preventing compounds such as `低下` from falling back to separate readings.
+
 ## 4.0.2
 
 - Replaced the furigana size slider with a free-form CSS length field.
