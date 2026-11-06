@@ -1,0 +1,20 @@
+name: Obsidian community checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: obsidianmd/obsidian-workflows@v1
+        with:
+          scanner-lint: true
