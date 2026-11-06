@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.8
+
+- Combines text across inline elements before automatic lookup, so compounds such as `初対面` resolve as `しょたいめん`.
+- Preserves vocabulary boundaries across whitespace, line breaks, paragraphs, and nested block elements.
+- Replaces pairwise DOM Range boundary checks with a linear traversal and adds permanent DOM regression tests.
+
 ## 4.0.7
 
 - Invalidates stale automatic-ruby work and fully rerenders Reading View when the display mode changes.

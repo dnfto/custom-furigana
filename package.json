@@ -1,6 +1,6 @@
 {
   "name": "custom-furigana",
-  "version": "4.0.7",
+  "version": "4.0.8",
   "private": true,
   "description": "Automatic and authored Japanese furigana with JLPT colors and local dictionaries.",
   "author": "dnfto",
