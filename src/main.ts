@@ -565,7 +565,7 @@ class DictionaryModal extends Modal {
 			text: this.plugin.t('lookupHelp'),
 		});
 
-		const list = this.contentEl.createEl('div', {
+		const list = this.contentEl.createDiv({
 			cls: 'custom-furigana-results',
 		});
 
@@ -574,11 +574,11 @@ class DictionaryModal extends Modal {
 				cls: 'custom-furigana-result',
 				attr: { type: 'button' },
 			});
-			const heading = result.createEl('span', {
+			const heading = result.createSpan({
 				cls: 'custom-furigana-result-heading',
 			});
 			heading.createEl('strong', { text: candidate.word });
-			heading.createEl('span', {
+			heading.createSpan({
 				cls: 'custom-furigana-result-reading',
 				text: candidate.reading,
 			});
@@ -595,18 +595,18 @@ class DictionaryModal extends Modal {
 				...candidate.jlpt,
 			];
 			if (badges.length > 0) {
-				heading.createEl('span', {
+				heading.createSpan({
 					cls: 'custom-furigana-result-badges',
 					text: badges.join(' · '),
 				});
 			}
 
-			result.createEl('span', {
+			result.createSpan({
 				cls: 'custom-furigana-result-definition',
 				text: candidate.definitions.join('; '),
 			});
 			if (candidate.partsOfSpeech.length > 0) {
-				result.createEl('span', {
+				result.createSpan({
 					cls: 'custom-furigana-result-pos',
 					text: candidate.partsOfSpeech.join(', '),
 				});

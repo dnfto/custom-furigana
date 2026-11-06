@@ -55,6 +55,13 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 	});
 }
 
+function requestUnknown(request: IDBRequest): Promise<unknown> {
+	return new Promise((resolve, reject) => {
+		request.onsuccess = () => resolve(request.result as unknown);
+		request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'));
+	});
+}
+
 function transactionDone(transaction: IDBTransaction): Promise<void> {
 	return new Promise((resolve, reject) => {
 		transaction.oncomplete = () => resolve();
@@ -78,7 +85,7 @@ async function openDatabase(): Promise<IDBDatabase> {
 
 async function readMetaVersion(db: IDBDatabase): Promise<string | undefined> {
 	const transaction = db.transaction(META, 'readonly');
-	const value = await requestResult<unknown>(
+	const value = await requestUnknown(
 		transaction.objectStore(META).get('dictionary-version'),
 	);
 	return typeof value === 'string' ? value : undefined;
@@ -149,13 +156,16 @@ async function buildDictionary(binaryData: ArrayBuffer, version: string): Promis
 async function lookup(requestId: number, query: string): Promise<void> {
 	const db = await openDatabase();
 	const transaction = db.transaction([TERMS, ENTRIES], 'readonly');
-	const ids =
-		(await requestResult<string[] | undefined>(transaction.objectStore(TERMS).get(query))) ?? [];
+	const storedIds = await requestUnknown(transaction.objectStore(TERMS).get(query));
+	const ids = Array.isArray(storedIds)
+		? storedIds.filter((id): id is string => typeof id === 'string')
+		: [];
 	const entriesStore = transaction.objectStore(ENTRIES);
 	const entries = (await Promise.all(
-		ids.map((id) =>
-			requestResult<LocalDictionaryEntry | undefined>(entriesStore.get(id)),
-		),
+		ids.map(async (id) => {
+			const entry = await requestUnknown(entriesStore.get(id));
+			return isLocalDictionaryEntry(entry) ? entry : undefined;
+		}),
 	)).filter((entry): entry is LocalDictionaryEntry => entry !== undefined);
 	send({ type: 'result', requestId, entries });
 }
