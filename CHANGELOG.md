@@ -1,12 +1,15 @@
 # Changelog
 
+## 4.0.5
+
+- Merges late per-kanji Reading View ruby back into known compounds and prevents automatic ruby from replacing authored ruby such as `下{くだ}り坂`.
+- Migrated settings to Obsidian's declarative settings API; Obsidian 1.13.0 or newer is now required.
+
 ## 4.0.4
 
 - Prefers OpenJLPT's verified vocabulary readings before automatic-reading shards.
 - Ensures registered compounds such as `低下` use their word reading (`ていか`) instead of separate kanji readings (`ひく` + `した`).
-- Merges late per-kanji Reading View ruby back into known compounds and prevents automatic ruby from replacing authored ruby such as `下{くだ}り坂`.
 - Updated the default JLPT colors for Light and Dark themes.
-- Migrated settings to Obsidian's declarative settings API; Obsidian 1.13.0 or newer is now required.
 
 ## 4.0.3
 
