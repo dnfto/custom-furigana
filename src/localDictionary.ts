@@ -2,7 +2,13 @@ import { TokenizerBuilder } from '@patdx/kuromoji';
 import { Platform, type Plugin } from 'obsidian';
 
 import DictionaryWorker from 'dictionary.worker';
+import {
+	type DictionaryWorkerMessage,
+	type LocalDictionaryEntry,
+} from './dictionaryTypes';
 import { ensureDataFile } from './remoteData';
+
+export type { LocalDictionaryEntry } from './dictionaryTypes';
 
 export type DictionaryStatus =
 	| 'idle'
@@ -11,23 +17,6 @@ export type DictionaryStatus =
 	| 'building-index'
 	| 'ready'
 	| 'error';
-
-export interface LocalDictionaryEntry {
-	id: string;
-	kanji: Array<{ common: boolean; text: string; tags?: string[] }>;
-	kana: Array<{
-		common: boolean;
-		text: string;
-		tags?: string[];
-		appliesToKanji: string[];
-	}>;
-	sense: Array<{
-		partOfSpeech: string[];
-		appliesToKanji?: string[];
-		appliesToKana?: string[];
-		gloss: Array<{ lang: string; text: string }>;
-	}>;
-}
 
 interface LookupResult {
 	entries: LocalDictionaryEntry[];
@@ -136,7 +125,7 @@ export class LocalDictionary {
 
 			const worker = new DictionaryWorker();
 			this.worker = worker;
-			worker.onmessage = (event: MessageEvent<any>) =>
+			worker.onmessage = (event: MessageEvent<DictionaryWorkerMessage>) =>
 				void this.handleWorkerMessage(event.data);
 			worker.onerror = (event) => this.fail(new Error(event.message));
 			worker.postMessage({ type: 'init', version: DICTIONARY_VERSION });
@@ -268,15 +257,15 @@ export class LocalDictionary {
 			shard = payload.entries ?? {};
 			this.mobileShardCache.set(shardIndex, shard);
 			while (this.mobileShardCache.size > 1) {
-				const oldest = this.mobileShardCache.keys().next().value as number | undefined;
-				if (oldest === undefined) break;
-				this.mobileShardCache.delete(oldest);
+				const oldest = this.mobileShardCache.keys().next();
+				if (oldest.done) break;
+				this.mobileShardCache.delete(oldest.value);
 			}
 		}
 		return shard[query] ?? [];
 	}
 
-	private async handleWorkerMessage(message: any): Promise<void> {
+	private async handleWorkerMessage(message: DictionaryWorkerMessage): Promise<void> {
 		switch (message.type) {
 			case 'needs-build': {
 				this.setStatus('building-index');
@@ -301,7 +290,7 @@ export class LocalDictionary {
 				const pending = this.pending.get(message.requestId);
 				if (!pending) break;
 				this.pending.delete(message.requestId);
-				pending.resolve(message.entries as LocalDictionaryEntry[]);
+				pending.resolve(message.entries);
 				break;
 			}
 			case 'error': {
@@ -318,11 +307,12 @@ export class LocalDictionary {
 	}
 
 	private workerLookup(query: string): Promise<LocalDictionaryEntry[]> {
-		if (!this.worker) return Promise.reject(new Error('Dictionary worker is unavailable'));
+		const worker = this.worker;
+		if (!worker) return Promise.reject(new Error('Dictionary worker is unavailable'));
 		const requestId = this.nextRequestId++;
 		return new Promise((resolve, reject) => {
 			this.pending.set(requestId, { resolve, reject });
-			this.worker!.postMessage({ type: 'lookup', requestId, query });
+			worker.postMessage({ type: 'lookup', requestId, query });
 		});
 	}
 

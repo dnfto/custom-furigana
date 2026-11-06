@@ -148,9 +148,9 @@ export class AutoFuriganaEngine {
 			this.cache.set(index, shard);
 			const limit = Platform.isMobileApp ? MOBILE_CACHE_LIMIT : DESKTOP_CACHE_LIMIT;
 			while (this.cache.size > limit) {
-				const oldest = this.cache.keys().next().value as number | undefined;
-				if (oldest === undefined) break;
-				this.cache.delete(oldest);
+				const oldest = this.cache.keys().next();
+				if (oldest.done) break;
+				this.cache.delete(oldest.value);
 			}
 			return shard;
 		} finally {

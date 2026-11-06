@@ -8,13 +8,34 @@ export interface DictionaryCandidate {
 	jlpt: string[];
 }
 
-const INVISIBLE_DICTIONARY_TEXT =
-	/[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]|\uDB40[\uDD00-\uDDEF]/gu;
+const INVISIBLE_CODE_POINTS = new Set([
+	0x00ad, 0x034f, 0x061c, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x3164,
+	0xfeff, 0xffa0,
+]);
+
+function isInvisibleDictionaryCodePoint(codePoint: number): boolean {
+	return (
+		INVISIBLE_CODE_POINTS.has(codePoint) ||
+		(codePoint >= 0x180b && codePoint <= 0x180f) ||
+		(codePoint >= 0x200b && codePoint <= 0x200f) ||
+		(codePoint >= 0x202a && codePoint <= 0x202e) ||
+		(codePoint >= 0x2060 && codePoint <= 0x206f) ||
+		(codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+		(codePoint >= 0xe0100 && codePoint <= 0xe01ef)
+	);
+}
+
+function stripInvisibleDictionaryText(value: string): string {
+	return [...value]
+		.filter((character) => {
+			const codePoint = character.codePointAt(0);
+			return codePoint === undefined || !isInvisibleDictionaryCodePoint(codePoint);
+		})
+		.join('');
+}
 
 function normalizeDictionaryText(value: string): string {
-	return value
-		.normalize('NFKC')
-		.replace(INVISIBLE_DICTIONARY_TEXT, '')
+	return stripInvisibleDictionaryText(value.normalize('NFKC'))
 		.replace(/\s+/gu, ' ')
 		.trim();
 }

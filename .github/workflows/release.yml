@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -22,6 +24,13 @@ jobs:
       - name: Verify release version
         run: |
           node -e "const m=require('./manifest.json'); if (m.version !== process.env.GITHUB_REF_NAME) throw new Error('Tag and manifest version differ')"
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

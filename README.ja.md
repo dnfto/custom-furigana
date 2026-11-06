@@ -1,6 +1,6 @@
 # Custom Furigana
 
-[한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md)
+[한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md)
 
 ふりがなの入力、本文を書き換えない自動ルビ、JLPTレベル別の表示と色、ローカルの日韓・日英辞書検索を、このプラグインだけで処理します。Advanced Rubyなどの別プラグインは不要です。
 

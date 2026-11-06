@@ -1,3 +1,8 @@
+import {
+	type DictionaryWorkerMessage,
+	type LocalDictionaryEntry,
+} from './dictionaryTypes';
+
 interface BuildMessage {
 	type: 'build';
 	binaryData: ArrayBuffer;
@@ -24,6 +29,24 @@ const TERMS = 'terms';
 const META = 'meta';
 
 let database: IDBDatabase | null = null;
+
+function send(message: DictionaryWorkerMessage): void {
+	postMessage(message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function isLocalDictionaryEntry(value: unknown): value is LocalDictionaryEntry {
+	return (
+		isRecord(value) &&
+		typeof value.id === 'string' &&
+		Array.isArray(value.kanji) &&
+		Array.isArray(value.kana) &&
+		Array.isArray(value.sense)
+	);
+}
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
@@ -55,7 +78,10 @@ async function openDatabase(): Promise<IDBDatabase> {
 
 async function readMetaVersion(db: IDBDatabase): Promise<string | undefined> {
 	const transaction = db.transaction(META, 'readonly');
-	return requestResult(transaction.objectStore(META).get('dictionary-version'));
+	const value = await requestResult<unknown>(
+		transaction.objectStore(META).get('dictionary-version'),
+	);
+	return typeof value === 'string' ? value : undefined;
 }
 
 async function initialize(expectedVersion: string): Promise<void> {
@@ -63,22 +89,30 @@ async function initialize(expectedVersion: string): Promise<void> {
 	const transaction = db.transaction(ENTRIES, 'readonly');
 	const count = await requestResult(transaction.objectStore(ENTRIES).count());
 	const storedVersion = await readMetaVersion(db);
-	postMessage({
+	send({
 		type: count > 0 && storedVersion === expectedVersion ? 'ready' : 'needs-build',
 	});
 }
 
-async function decompressDictionary(binaryData: ArrayBuffer): Promise<any> {
+async function decompressDictionary(
+	binaryData: ArrayBuffer,
+): Promise<LocalDictionaryEntry[]> {
 	const stream = new Response(binaryData).body;
 	if (!stream) throw new Error('Could not read dictionary data');
 	const decompressed = stream.pipeThrough(new DecompressionStream('gzip'));
-	return JSON.parse(await new Response(decompressed).text());
+	const payload = JSON.parse(await new Response(decompressed).text()) as unknown;
+	if (!isRecord(payload) || !Array.isArray(payload.words)) {
+		throw new Error('Invalid dictionary data');
+	}
+	if (!payload.words.every(isLocalDictionaryEntry)) {
+		throw new Error('Invalid dictionary entry');
+	}
+	return payload.words;
 }
 
 async function buildDictionary(binaryData: ArrayBuffer, version: string): Promise<void> {
-	postMessage({ type: 'building' });
-	const dictionary = await decompressDictionary(binaryData);
-	const words = Array.isArray(dictionary.words) ? dictionary.words : [];
+	send({ type: 'building' });
+	const words = await decompressDictionary(binaryData);
 	const termIndex = new Map<string, string[]>();
 
 	for (let index = 0; index < words.length; index += 1) {
@@ -94,7 +128,7 @@ async function buildDictionary(binaryData: ArrayBuffer, version: string): Promis
 			termIndex.set(term.text, ids);
 		}
 		if (index > 0 && index % 50000 === 0) {
-			postMessage({ type: 'progress', done: index, total: words.length });
+			send({ type: 'progress', done: index, total: words.length });
 		}
 	}
 
@@ -109,7 +143,7 @@ async function buildDictionary(binaryData: ArrayBuffer, version: string): Promis
 	for (const [term, ids] of termIndex) termsStore.put(ids, term);
 	transaction.objectStore(META).put(version, 'dictionary-version');
 	await transactionDone(transaction);
-	postMessage({ type: 'ready' });
+	send({ type: 'ready' });
 }
 
 async function lookup(requestId: number, query: string): Promise<void> {
@@ -119,9 +153,11 @@ async function lookup(requestId: number, query: string): Promise<void> {
 		(await requestResult<string[] | undefined>(transaction.objectStore(TERMS).get(query))) ?? [];
 	const entriesStore = transaction.objectStore(ENTRIES);
 	const entries = (await Promise.all(
-		ids.map((id) => requestResult<any>(entriesStore.get(id))),
-	)).filter(Boolean);
-	postMessage({ type: 'result', requestId, query, entries });
+		ids.map((id) =>
+			requestResult<LocalDictionaryEntry | undefined>(entriesStore.get(id)),
+		),
+	)).filter((entry): entry is LocalDictionaryEntry => entry !== undefined);
+	send({ type: 'result', requestId, entries });
 }
 
 self.onmessage = (event: MessageEvent<IncomingMessage>) => {
@@ -140,7 +176,7 @@ self.onmessage = (event: MessageEvent<IncomingMessage>) => {
 					break;
 			}
 		} catch (error) {
-			postMessage({
+			send({
 				type: 'error',
 				requestId: message.type === 'lookup' ? message.requestId : undefined,
 				message: error instanceof Error ? error.message : String(error),

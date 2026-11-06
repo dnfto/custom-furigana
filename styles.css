@@ -66,7 +66,7 @@ body.theme-dark ruby.custom-furigana-auto-ruby > rt {
 
 body.custom-furigana-mode-visible ruby.custom-furigana-auto-ruby > rt,
 body.custom-furigana-mode-hidden ruby.custom-furigana-ruby > rt {
-	display: none !important;
+	display: none;
 }
 
 ruby.custom-furigana-ruby:focus-visible {

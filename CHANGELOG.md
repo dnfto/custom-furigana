@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.1
+
+- Updated settings headings to the official Obsidian API.
+- Added build provenance attestations for release assets.
+- Made English the primary README while retaining Korean and Japanese translations.
+- Improved dictionary worker type safety and resolved scanner lint warnings.
+
 ## 4.0.0
 
 - Added non-destructive automatic furigana in Reading View and Live Preview.

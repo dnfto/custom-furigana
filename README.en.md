@@ -1,6 +1,6 @@
 # Custom Furigana
 
-[한국어](README.md) · [English](README.en.md) · [日本語](README.ja.md)
+[한국어](README.ko.md) · [English](README.md) · [日本語](README.ja.md)
 
 Write furigana, add non-destructive automatic ruby, filter and color it by JLPT level, and search local Japanese–Korean and Japanese–English dictionaries with a single plugin. No separate Advanced Ruby plugin is required.
 

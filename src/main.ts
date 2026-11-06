@@ -265,7 +265,7 @@ function stripFurigana(text: string): string {
 function createRubyElement(
 	match: Pick<RubyMatch, 'base' | 'reading' | 'syntax' | 'jlptLevel'>,
 ): HTMLElement {
-	const ruby = document.createElement('ruby');
+	const ruby = createEl('ruby');
 	ruby.className = `custom-furigana-ruby ${
 		match.syntax === 'auto'
 			? 'custom-furigana-auto-ruby'
@@ -275,11 +275,8 @@ function createRubyElement(
 	if (match.jlptLevel) ruby.dataset.jlpt = match.jlptLevel;
 	ruby.tabIndex = 0;
 	ruby.setAttribute('aria-label', `${match.base}, ${match.reading}`);
-	ruby.appendChild(document.createTextNode(match.base));
-
-	const rt = document.createElement('rt');
-	rt.textContent = match.reading;
-	ruby.appendChild(rt);
+	ruby.appendText(match.base);
+	ruby.createEl('rt', { text: match.reading });
 	return ruby;
 }
 
@@ -711,9 +708,9 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 				? this.plugin.settings.lightRubyColor
 				: this.plugin.settings.darkRubyColor;
 
-		containerEl.createEl('h4', {
-			text: this.plugin.t(theme === 'light' ? 'lightModeColors' : 'darkModeColors'),
-		});
+		new Setting(containerEl)
+			.setName(this.plugin.t(theme === 'light' ? 'lightModeColors' : 'darkModeColors'))
+			.setHeading();
 		this.addColorSetting(
 			containerEl,
 			this.plugin.t('manualRubyColor'),
@@ -752,7 +749,9 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.createEl('h2', { text: this.plugin.t('settingsTitle') });
+		new Setting(containerEl)
+			.setName(this.plugin.t('settingsTitle'))
+			.setHeading();
 
 		new Setting(containerEl)
 			.setName(this.plugin.t('language'))
@@ -792,7 +791,6 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 			.addSlider((slider) =>
 				slider
 					.setLimits(0.35, 0.9, 0.05)
-					.setDynamicTooltip()
 					.setValue(this.plugin.settings.rubySize)
 					.onChange(async (value) => {
 						this.plugin.settings.rubySize = value;
@@ -800,11 +798,10 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		containerEl.createEl('h3', { text: this.plugin.t('automaticFurigana') });
-		containerEl.createEl('p', {
-			cls: 'setting-item-description',
-			text: this.plugin.t('automaticFuriganaDesc'),
-		});
+		new Setting(containerEl)
+			.setName(this.plugin.t('automaticFurigana'))
+			.setDesc(this.plugin.t('automaticFuriganaDesc'))
+			.setHeading();
 		for (const level of JLPT_LEVELS) {
 			new Setting(containerEl)
 				.setName(
@@ -823,7 +820,9 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 				);
 		}
 
-		containerEl.createEl('h3', { text: this.plugin.t('rubyColors') });
+		new Setting(containerEl)
+			.setName(this.plugin.t('rubyColors'))
+			.setHeading();
 		this.addThemeColors(containerEl, 'light');
 		this.addThemeColors(containerEl, 'dark');
 
@@ -839,11 +838,10 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		containerEl.createEl('h3', { text: this.plugin.t('dictionary') });
-		containerEl.createEl('p', {
-			cls: 'setting-item-description',
-			text: this.plugin.t('dictionaryDesc'),
-		});
+		new Setting(containerEl)
+			.setName(this.plugin.t('dictionary'))
+			.setDesc(this.plugin.t('dictionaryDesc'))
+			.setHeading();
 
 		new Setting(containerEl)
 			.setName(this.plugin.t('dictionaryStatus'))
@@ -854,7 +852,6 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 			.addSlider((slider) =>
 				slider
 					.setLimits(5, 30, 1)
-					.setDynamicTooltip()
 					.setValue(this.plugin.settings.maxDictionaryResults)
 					.onChange(async (value) => {
 						this.plugin.settings.maxDictionaryResults = value;
@@ -1157,14 +1154,14 @@ export default class CustomFuriganaPlugin extends Plugin {
 			const matches = extractRuby(text);
 			if (matches.length === 0) continue;
 
-			const fragment = document.createDocumentFragment();
+			const fragment = createFragment();
 			let cursor = 0;
 			for (const match of matches) {
-				fragment.appendChild(document.createTextNode(text.slice(cursor, match.start)));
+				fragment.appendText(text.slice(cursor, match.start));
 				fragment.appendChild(createRubyElement(match));
 				cursor = match.end;
 			}
-			fragment.appendChild(document.createTextNode(text.slice(cursor)));
+			fragment.appendText(text.slice(cursor));
 			node.parentNode?.replaceChild(fragment, node);
 		}
 
@@ -1196,18 +1193,16 @@ export default class CustomFuriganaPlugin extends Plugin {
 					(match) => this.settings.autoLevelEnabled[match.jlptLevel],
 				);
 				if (matches.length === 0 || !node.parentNode) continue;
-				const fragment = document.createDocumentFragment();
+				const fragment = createFragment();
 				let cursor = 0;
 				for (const match of matches) {
-					fragment.appendChild(
-						document.createTextNode(text.slice(cursor, match.start)),
-					);
+					fragment.appendText(text.slice(cursor, match.start));
 					fragment.appendChild(
 						createRubyElement(autoMatchToRubyMatch(match)),
 					);
 					cursor = match.end;
 				}
-				fragment.appendChild(document.createTextNode(text.slice(cursor)));
+				fragment.appendText(text.slice(cursor));
 				node.parentNode.replaceChild(fragment, node);
 			} catch (error) {
 				console.warn('Custom Furigana automatic reading failed', error);
