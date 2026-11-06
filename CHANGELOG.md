@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.0.9
 
 - Processes Reading View content added or replaced by Obsidian's virtual scrolling without requiring another mode switch.
 - Debounces scroll and DOM updates and skips unchanged previews using a stable source-text signature.
