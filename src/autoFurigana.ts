@@ -1,5 +1,6 @@
 import { Platform, type Plugin } from 'obsidian';
 
+import { normalizeKana } from './dictionaryCandidates';
 import { jlptLevelForText, type JlptLevel } from './jlptLevels';
 import { ensureDataFile } from './remoteData';
 
@@ -26,6 +27,7 @@ const MOBILE_CACHE_LIMIT = 12;
 const DESKTOP_CACHE_LIMIT = 32;
 const FILE_RETRY_DELAY_MS = 750;
 const HAS_KANJI = /\p{Script=Han}/u;
+const KANJI_RUN = /[\p{Script=Han}々〆ヶ]+/gu;
 const JAPANESE_RUN =
 	/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}々〆ヶー]+/gu;
 
@@ -62,6 +64,66 @@ function fallbackSegments(text: string): TextSegment[] {
 		segments.push({ segment: match[0], index: match.index });
 	}
 	return segments;
+}
+
+export function alignAutomaticReading(
+	surface: string,
+	reading: string,
+	offset = 0,
+): AutoRubyMatch[] {
+	const blocks = [...surface.matchAll(KANJI_RUN)];
+	if (blocks.length === 0) return [];
+
+	const normalizedReading = normalizeKana(reading);
+	let readingCursor = 0;
+	const leadingKana = normalizeKana(surface.slice(0, blocks[0].index ?? 0));
+	if (leadingKana) {
+		if (!normalizedReading.startsWith(leadingKana)) return [];
+		readingCursor = leadingKana.length;
+	}
+
+	const matches: AutoRubyMatch[] = [];
+	for (let index = 0; index < blocks.length; index += 1) {
+		const block = blocks[index];
+		const blockStart = block.index ?? 0;
+		const blockEnd = blockStart + block[0].length;
+		const nextBlockStart = blocks[index + 1]?.index ?? surface.length;
+		const kanaAnchor = normalizeKana(surface.slice(blockEnd, nextBlockStart));
+		let readingEnd = normalizedReading.length;
+
+		if (kanaAnchor) {
+			const anchorIndex = normalizedReading.indexOf(kanaAnchor, readingCursor);
+			if (anchorIndex < readingCursor) return [];
+			readingEnd = anchorIndex;
+		}
+
+		const blockReading = normalizedReading.slice(readingCursor, readingEnd);
+		if (!blockReading) return [];
+		matches.push({
+			start: offset + blockStart,
+			end: offset + blockEnd,
+			base: block[0],
+			reading: blockReading,
+			jlptLevel: jlptLevelForText(block[0]),
+		});
+		readingCursor = readingEnd + kanaAnchor.length;
+	}
+
+	return readingCursor === normalizedReading.length ? matches : [];
+}
+
+function contextualReading(
+	surface: string,
+	reading: string,
+	followingText: string,
+): string | null {
+	if (surface !== '来') return reading;
+
+	const followingKana = normalizeKana(followingText);
+	if (/^(?:た|て|ま)/u.test(followingKana)) return 'き';
+	if (/^(?:な|さ|よ)/u.test(followingKana)) return 'こ';
+	if (/^れ/u.test(followingKana)) return 'く';
+	return null;
 }
 
 export class AutoFuriganaEngine {
@@ -104,13 +166,20 @@ export class AutoFuriganaEngine {
 			const found = await this.lookupLongestPrefix(remaining);
 			if (found) {
 				const [base, reading] = found;
-				matches.push({
-					start: absoluteStart + cursor,
-					end: absoluteStart + cursor + base.length,
+				const resolvedReading = contextualReading(
 					base,
 					reading,
-					jlptLevel: jlptLevelForText(base),
-				});
+					remaining.slice(base.length),
+				);
+				if (resolvedReading) {
+					matches.push(
+						...alignAutomaticReading(
+							base,
+							resolvedReading,
+							absoluteStart + cursor,
+						),
+					);
+				}
 				cursor += base.length;
 				continue;
 			}
