@@ -24,7 +24,11 @@ import {
 	type SettingDefinitionItem,
 } from 'obsidian';
 
-import { AutoFuriganaEngine, type AutoRubyMatch } from './autoFurigana';
+import {
+	AutoFuriganaEngine,
+	type AutoRubyMatch,
+	type RubyScope,
+} from './autoFurigana';
 import {
 	deduplicateDictionaryCandidates,
 	normalizeKana,
@@ -83,6 +87,7 @@ interface FuriganaSettings {
 	uiLanguage: UiLanguage;
 	mode: FuriganaMode;
 	rubySize: string;
+	rubyScope: RubyScope;
 	lightRubyColor: string;
 	darkRubyColor: string;
 	autoLevelEnabled: Record<JlptLevel, boolean>;
@@ -106,6 +111,7 @@ const DEFAULT_SETTINGS: FuriganaSettings = {
 	uiLanguage: 'ko',
 	mode: 'visible',
 	rubySize: '0.55em',
+	rubyScope: 'kanji',
 	lightRubyColor: '',
 	darkRubyColor: '',
 	autoLevelEnabled: {
@@ -294,6 +300,7 @@ function stripFurigana(text: string): string {
 
 function createRubyElement(
 	match: Pick<RubyMatch, 'base' | 'reading' | 'syntax' | 'jlptLevel'>,
+	interactive = true,
 ): HTMLElement {
 	const ruby = createEl('ruby');
 	ruby.className = `custom-furigana-ruby ${
@@ -303,7 +310,9 @@ function createRubyElement(
 	}`;
 	ruby.dataset.syntax = match.syntax;
 	if (match.jlptLevel) ruby.dataset.jlpt = match.jlptLevel;
-	ruby.tabIndex = 0;
+	// Only static Reading View markup gets a focusable ruby: a focusable element
+	// inside the editor breaks Android touch selection and the IME focus.
+	if (interactive) ruby.tabIndex = 0;
 	ruby.setAttribute('aria-label', `${match.base}, ${match.reading}`);
 	ruby.appendText(match.base);
 	ruby.createEl('rt', { text: match.reading });
@@ -491,18 +500,20 @@ class FuriganaWidget extends WidgetType {
 	}
 
 	toDOM(view: EditorView): HTMLElement {
-		const ruby = createRubyElement(this.match);
+		// In the editor the widget is only used for authored ruby, where the
+		// `{漢字|よみ}` markup has to be hidden. Automatic ruby renders through
+		// `buildDecorations` (mark + attribute) instead.
+		const ruby = createRubyElement(this.match, false);
 		ruby.classList.add('custom-furigana-editor-ruby');
+		// `cmIgnore` makes CodeMirror's DOM text reader skip this node entirely, so
+		// a re-parented ruby can never leak its <rt> text into the document.
+		(ruby as HTMLElement & { cmIgnore?: boolean }).cmIgnore = true;
 		ruby.addEventListener('mousedown', (event) => {
-			if (event.button !== 0) return;
+			if (event.button !== 0 || view.composing) return;
 			event.preventDefault();
+			// Land after the `{` so the caret sits on the base and reveals the markup
 			view.dispatch({
-				selection: {
-					anchor:
-						this.match.syntax === 'auto'
-							? this.match.start
-							: this.match.start + 1,
-				},
+				selection: { anchor: this.match.start + 1 },
 			});
 			view.focus();
 		});
@@ -557,6 +568,20 @@ function visibleTextRanges(
 	return [...ranges.values()];
 }
 
+/**
+ * Automatic ruby in the editor: **the document text is never replaced**.
+ * A mark decoration wraps the original text and keeps the reading in a
+ * `data-cf-rt` attribute, which CSS renders above the kanji through `::after`.
+ *
+ * Why not a `Decoration.replace` widget:
+ * - the document text stays real text, so CodeMirror's DOM reader can never
+ *   read a kana that is not in the document — the source cannot be polluted;
+ * - nothing is hidden, so touch selection anchors and handles behave natively;
+ * - the decoration only changes attributes, never structure, so it does not
+ *   interrupt an IME composition.
+ */
+const AUTO_RUBY_MARK_CLASS = 'custom-furigana-editor-auto';
+
 function buildDecorations(
 	view: EditorView,
 	plugin: CustomFuriganaPlugin,
@@ -580,6 +605,9 @@ function buildDecorations(
 			if (!match.jlptLevel || !plugin.settings.autoLevelEnabled[match.jlptLevel]) {
 				continue;
 			}
+			// Positions come from an earlier document state: drop anything whose
+			// underlying text changed in the meantime.
+			if (view.state.doc.sliceString(match.start, match.end) !== match.base) continue;
 			if (manualMatches.some((manual) => overlaps(manual, match))) continue;
 			collected.set(`${match.start}:${match.end}`, match);
 		}
@@ -591,19 +619,55 @@ function buildDecorations(
 	let previousEnd = -1;
 	for (const match of sorted) {
 		if (match.start < previousEnd) continue;
-		if (cursorTouchesMatch(view, match) || isInsideCode(view, match.start)) continue;
-		builder.add(
-			match.start,
-			match.end,
-			Decoration.replace({
-				widget: new FuriganaWidget(match, plugin),
-				inclusive: false,
-			}),
-		);
+		if (isInsideCode(view, match.start)) continue;
+		if (match.syntax === 'auto') {
+			builder.add(
+				match.start,
+				match.end,
+				Decoration.mark({
+					class: `custom-furigana-ruby custom-furigana-auto-ruby ${AUTO_RUBY_MARK_CLASS}`,
+					attributes: {
+						'data-cf-rt': match.reading,
+						'data-jlpt': match.jlptLevel ?? 'unlisted',
+						// Reserve horizontal room when the reading is wider than the base
+						// (e.g. 塊 / かたまり), otherwise neighbouring readings collide.
+						// Only the counts reach CSS; no text is added to the document.
+						style: `--cf-rt-chars:${[...match.reading].length};--cf-base-chars:${[...match.base].length}`,
+					},
+				}),
+			);
+		} else {
+			// Authored ruby is real markup in the note, so hide the braces to show it
+			if (cursorTouchesMatch(view, match)) continue;
+			builder.add(
+				match.start,
+				match.end,
+				Decoration.replace({
+					widget: new FuriganaWidget(match, plugin),
+					inclusive: false,
+				}),
+			);
+		}
 		previousEnd = match.end;
 	}
 
 	return builder.finish();
+}
+
+/** Wait for typing to settle before hitting the dictionary shards again */
+const AUTOMATIC_REFRESH_DELAY_MS = 180;
+
+function sameMatches(left: RubyMatch[], right: RubyMatch[]): boolean {
+	if (left.length !== right.length) return false;
+	return left.every((match, index) => {
+		const other = right[index];
+		return (
+			match.start === other.start &&
+			match.end === other.end &&
+			match.reading === other.reading &&
+			match.base === other.base
+		);
+	});
 }
 
 function createLivePreviewExtension(plugin: CustomFuriganaPlugin) {
@@ -611,61 +675,142 @@ function createLivePreviewExtension(plugin: CustomFuriganaPlugin) {
 		class implements PluginValue {
 			decorations: DecorationSet = Decoration.none;
 			private revision = -1;
-			private generation = 0;
+			private timer: number | null = null;
+			private composing = false;
+			private destroyed = false;
+			private appliedAutomatic: RubyMatch[] = [];
+			private hasManualRuby = false;
 
 			constructor(view: EditorView) {
 				this.rebuild(view);
 			}
 
 			update(update: ViewUpdate): void {
+				const view = update.view;
+
+				// ---------- IME composition ----------
+				// While a composition is active, any structural change to the editor
+				// DOM makes Android WebView commit the preedit early (typing `k` yields
+				// か instead of letting かみなり build up). So: no rebuild and no dispatch
+				// during composition; do one catch-up rebuild once it ends.
+				if (view.composing) {
+					this.composing = true;
+					return;
+				}
+				if (this.composing) {
+					this.composing = false;
+					this.rebuild(view);
+					return;
+				}
+
+				if (update.docChanged) this.mapAutomatic(update);
+
+				const manualSelectionChange =
+					update.selectionSet && this.hasManualRuby;
 				if (
 					update.docChanged ||
-					update.selectionSet ||
+					manualSelectionChange ||
 					update.viewportChanged ||
 					this.revision !== plugin.settingsRevision
 				) {
-					this.rebuild(update.view);
+					this.rebuild(view);
 				}
 			}
 
 			destroy(): void {
-				this.generation += 1;
+				this.destroyed = true;
+				this.clearTimer();
+			}
+
+			private clearTimer(): void {
+				if (this.timer !== null) {
+					window.clearTimeout(this.timer);
+					this.timer = null;
+				}
+			}
+
+			/** Map known matches through the change so typing does not flash the ruby */
+			private mapAutomatic(update: ViewUpdate): void {
+				if (this.appliedAutomatic.length === 0) return;
+				const mapped: RubyMatch[] = [];
+				for (const match of this.appliedAutomatic) {
+					const start = update.changes.mapPos(match.start, 1);
+					const end = update.changes.mapPos(match.end, -1);
+					if (end > start) mapped.push({ ...match, start, end });
+				}
+				this.appliedAutomatic = mapped;
 			}
 
 			private rebuild(view: EditorView): void {
 				this.revision = plugin.settingsRevision;
-				const generation = ++this.generation;
-				this.decorations = buildDecorations(view, plugin);
+				this.decorations = buildDecorations(
+					view,
+					plugin,
+					this.appliedAutomatic,
+				);
+				// Only authored ruby depends on the selection (it reveals the markup)
+				this.hasManualRuby = this.containsManualRuby(view);
+				this.scheduleAutomatic(view);
+			}
+
+			private containsManualRuby(view: EditorView): boolean {
+				for (const range of visibleTextRanges(view)) {
+					if (extractRuby(range.text, range.from).length > 0) return true;
+				}
+				return false;
+			}
+
+			private scheduleAutomatic(view: EditorView): void {
+				this.clearTimer();
 				if (
 					plugin.settings.mode !== 'dictionary' ||
 					!plugin.settings.livePreview
 				) {
 					return;
 				}
+				this.timer = window.setTimeout(() => {
+					this.timer = null;
+					void this.refreshAutomatic(view);
+				}, AUTOMATIC_REFRESH_DELAY_MS);
+			}
 
-				const ranges = visibleTextRanges(view);
-				void Promise.all(
-					ranges.map((range) =>
-						plugin.autoFurigana.annotateText(range.text, range.from),
-					),
-				)
-					.then((results) => {
-						if (
-							generation !== this.generation ||
-							this.revision !== plugin.settingsRevision
-						) {
-							return;
-						}
-						this.decorations = buildDecorations(
-							view,
-							plugin,
-							results.flat().map(autoMatchToRubyMatch),
-						);
-						view.dispatch({});
-					})
-					.catch((error) => {
-						console.warn('Custom Furigana automatic reading failed', error);
-					});
+			private async refreshAutomatic(view: EditorView): Promise<void> {
+				if (this.composing || view.composing) {
+					// Composition still running; the post-composition rebuild reschedules
+					return;
+				}
+				const revision = plugin.settingsRevision;
+				let results: RubyMatch[] = [];
+				try {
+					// Query lines in parallel; the engine already deduplicates shard loads
+					const perRange = await Promise.all(
+						visibleTextRanges(view).map(async (range) => {
+							const matches = await plugin.autoFurigana.annotateText(
+								range.text,
+								range.from,
+							);
+							return matches.map(autoMatchToRubyMatch);
+						}),
+					);
+					results = perRange.flat();
+				} catch (error) {
+					console.warn('Custom Furigana automatic reading failed', error);
+					return;
+				}
+				if (revision !== plugin.settingsRevision) return;
+				if (this.destroyed) return;
+				if (view.composing) {
+					this.scheduleAutomatic(view);
+					return;
+				}
+
+				results.sort((left, right) => left.start - right.start);
+				if (sameMatches(this.appliedAutomatic, results)) return;
+				this.appliedAutomatic = results;
+				this.decorations = buildDecorations(view, plugin, results);
+				// Empty transaction: makes the view re-read this plugin's decorations
+				// without touching the document.
+				view.dispatch({});
 			}
 		},
 		{ decorations: (value) => value.decorations },
@@ -1003,6 +1148,23 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 							);
 						},
 					},
+					{
+						name: this.plugin.t('rubyScope'),
+						desc: this.plugin.t('rubyScopeDesc'),
+						render: (setting) => {
+							setting.addDropdown((dropdown) =>
+								dropdown
+									.addOption('kanji', this.plugin.t('rubyScopeKanji'))
+									.addOption('word', this.plugin.t('rubyScopeWord'))
+									.setValue(this.plugin.settings.rubyScope)
+									.onChange(async (value) => {
+										this.plugin.settings.rubyScope =
+											value === 'word' ? 'word' : 'kanji';
+										await this.plugin.saveAndApplySettings();
+									}),
+							);
+						},
+					},
 				],
 			},
 			{
@@ -1116,6 +1278,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 		await this.loadSettings();
 		this.applySettings();
 		this.autoFurigana = new AutoFuriganaEngine(this);
+		this.autoFurigana.scope = this.settings.rubyScope;
 
 		this.registerMarkdownPostProcessor((element) =>
 			this.processRenderedFurigana(element),
@@ -1279,6 +1442,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 			...defaults,
 			...current,
 			mode: saved.mode ?? 'visible',
+			rubyScope: saved.rubyScope === 'word' ? 'word' : 'kanji',
 			rubySize:
 				normalizeRubySize(saved.rubySize ?? defaults.rubySize) ??
 				defaults.rubySize,
@@ -1310,6 +1474,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 
 	private applySettings(): void {
 		document.documentElement.classList.remove('rt-always-visible');
+		if (this.autoFurigana) this.autoFurigana.scope = this.settings.rubyScope;
 		document.body.classList.remove(
 			'custom-furigana-mode-hover',
 			'custom-furigana-mode-always',
@@ -1424,6 +1589,17 @@ export default class CustomFuriganaPlugin extends Plugin {
 	}
 
 	private async processRenderedFurigana(root: HTMLElement): Promise<void> {
+		// Only touch static rendered markup. Injecting <ruby>/<rt> into editable
+		// CodeMirror content can make the editor's next DOM read treat the reading
+		// as typed text and write it into the note, so skip anything that lives in
+		// `.cm-content` but is not inside a non-editable block widget.
+		if (
+			root.closest('.cm-content') &&
+			!root.closest('[contenteditable="false"]')
+		) {
+			return;
+		}
+
 		const renderRevision = this.settingsRevision;
 		unwrapAutomaticRuby(root);
 
