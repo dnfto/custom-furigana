@@ -36,7 +36,7 @@ Authored ruby and every automatic JLPT level have separate Light and Dark theme 
 - **Remove furigana from selection**
 - **Cycle furigana mode**
 
-Mode, size, Light and Dark colors, automatic JLPT levels, Live Preview, and UI language can be changed under **Settings → Custom Furigana**. The UI supports Korean, English, and Japanese.
+Mode, size, Light and Dark colors, automatic JLPT levels, Live Preview, and UI language can be changed under **Settings → Custom Furigana**. Furigana size accepts CSS units such as `px`, `em`, `rem`, and `%`; a unitless number is treated as pixels. The UI supports Korean, English, and Japanese.
 
 ## Offline dictionaries
 

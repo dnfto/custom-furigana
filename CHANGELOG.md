@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.2
+
+- Replaced the furigana size slider with a free-form CSS length field.
+- Treats unitless size values as pixels while supporting `px`, `em`, `rem`, `%`, and other CSS length units.
+- Preserves legacy numeric settings as their original `em` values during migration.
+
 ## 4.0.1
 
 - Updated settings headings to the official Obsidian API.

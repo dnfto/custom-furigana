@@ -69,7 +69,7 @@ const JLPT_LABEL_KEYS: Record<JlptLevel, TranslationKey> = {
 interface FuriganaSettings {
 	uiLanguage: UiLanguage;
 	mode: FuriganaMode;
-	rubySize: number;
+	rubySize: string;
 	lightRubyColor: string;
 	darkRubyColor: string;
 	autoLevelEnabled: Record<JlptLevel, boolean>;
@@ -92,7 +92,7 @@ interface RubyMatch {
 const DEFAULT_SETTINGS: FuriganaSettings = {
 	uiLanguage: 'ko',
 	mode: 'visible',
-	rubySize: 0.55,
+	rubySize: '0.55em',
 	lightRubyColor: '',
 	darkRubyColor: '',
 	autoLevelEnabled: {
@@ -117,6 +117,23 @@ function createDefaultSettings(): FuriganaSettings {
 		lightAutoColors: { ...DEFAULT_SETTINGS.lightAutoColors },
 		darkAutoColors: { ...DEFAULT_SETTINGS.darkAutoColors },
 	};
+}
+
+const CSS_LENGTH_PATTERN =
+	/^(?:\d+(?:\.\d+)?|\.\d+)(?:px|em|rem|%|pt|pc|in|cm|mm|q|ch|ex|cap|ic|lh|rlh|vw|vh|vi|vb|vmin|vmax)$/iu;
+const UNITLESS_LENGTH_PATTERN = /^(?:\d+(?:\.\d+)?|\.\d+)$/u;
+
+export function normalizeRubySize(value: string | number): string | null {
+	if (typeof value === 'number') {
+		return Number.isFinite(value) && value > 0 ? `${value}em` : null;
+	}
+
+	const trimmed = value.trim().toLowerCase();
+	if (UNITLESS_LENGTH_PATTERN.test(trimmed)) {
+		return Number.parseFloat(trimmed) > 0 ? `${trimmed}px` : null;
+	}
+	if (!CSS_LENGTH_PATTERN.test(trimmed)) return null;
+	return Number.parseFloat(trimmed) > 0 ? trimmed : null;
 }
 
 function currentAccentHex(): string {
@@ -787,13 +804,18 @@ class CustomFuriganaSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName(this.plugin.t('rubySize'))
-			.setDesc(`${Math.round(this.plugin.settings.rubySize * 100)}%`)
-			.addSlider((slider) =>
-				slider
-					.setLimits(0.35, 0.9, 0.05)
+			.setDesc(this.plugin.t('rubySizeDesc'))
+			.addText((text) =>
+				text
+					.setPlaceholder('12px / 0.55em')
 					.setValue(this.plugin.settings.rubySize)
 					.onChange(async (value) => {
-						this.plugin.settings.rubySize = value;
+						const normalized = normalizeRubySize(value);
+						text.inputEl.setCustomValidity(
+							normalized ? '' : this.plugin.t('rubySizeInvalid'),
+						);
+						if (!normalized) return;
+						this.plugin.settings.rubySize = normalized;
 						await this.plugin.saveAndApplySettings();
 					}),
 			);
@@ -1029,9 +1051,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 	}
 
 	private async loadSettings(): Promise<void> {
-		type LegacySettings = Partial<FuriganaSettings> & {
+		type LegacySettings = Omit<Partial<FuriganaSettings>, 'rubySize'> & {
 			displayMode?: 'hover' | 'always';
 			rubyColor?: string;
+			rubySize?: string | number;
 		};
 		const saved = ((await this.loadData()) ?? {}) as LegacySettings;
 		const {
@@ -1044,6 +1067,9 @@ export default class CustomFuriganaPlugin extends Plugin {
 			...defaults,
 			...current,
 			mode: saved.mode ?? 'visible',
+			rubySize:
+				normalizeRubySize(saved.rubySize ?? defaults.rubySize) ??
+				defaults.rubySize,
 			lightRubyColor: saved.lightRubyColor ?? legacyRubyColor ?? '',
 			darkRubyColor: saved.darkRubyColor ?? legacyRubyColor ?? '',
 			autoLevelEnabled: {
@@ -1084,7 +1110,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 		}
 		document.body.style.setProperty(
 			'--custom-furigana-size',
-			`${this.settings.rubySize}em`,
+			this.settings.rubySize,
 		);
 		document.body.style.setProperty(
 			'--custom-furigana-light-color',
