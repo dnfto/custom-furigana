@@ -11,20 +11,22 @@
   },
   "scripts": {
     "build": "node esbuild.config.mjs production",
-		"build:korean-dictionary": "node scripts/build-korean-dictionary.mjs",
-		"build:mobile-dictionary": "node scripts/build-mobile-dictionary.mjs",
-		"build:auto-readings": "node scripts/build-auto-readings.mjs",
-		"build:jlpt-levels": "node scripts/build-jlpt-levels.mjs",
-		"build:data-release": "node scripts/build-data-release.mjs",
-    "dev": "node esbuild.config.mjs"
+    "build:korean-dictionary": "node scripts/build-korean-dictionary.mjs",
+    "build:mobile-dictionary": "node scripts/build-mobile-dictionary.mjs",
+    "build:auto-readings": "node scripts/build-auto-readings.mjs",
+    "build:jlpt-levels": "node scripts/build-jlpt-levels.mjs",
+    "build:data-release": "node scripts/build-data-release.mjs",
+    "dev": "node esbuild.config.mjs",
+    "test": "node scripts/run-tests.mjs"
   },
   "devDependencies": {
-		"@patdx/kuromoji": "1.0.4",
     "@codemirror/language": "^6.10.8",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.5",
+    "@patdx/kuromoji": "1.0.4",
     "esbuild": "^0.25.0",
-		"esbuild-plugin-inline-worker": "0.1.1",
+    "esbuild-plugin-inline-worker": "0.1.1",
+    "linkedom": "^0.18.12",
     "obsidian": "^1.14.4",
     "typescript": "^5.8.2"
   }

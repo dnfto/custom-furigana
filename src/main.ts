@@ -41,6 +41,13 @@ import {
 	LocalDictionary,
 	type DictionaryStatus,
 } from './localDictionary';
+import {
+	renderedBlockContainsRawRuby,
+	renderedTextParts,
+	renderedTextPartsAreCurrent,
+	renderedTextRuns,
+	type RenderedTextPart,
+} from './renderedText';
 
 type FuriganaMode = 'dictionary' | 'visible' | 'hidden';
 type RubySyntax = 'legacy' | 'advanced';
@@ -167,10 +174,6 @@ const JAPANESE_WORD = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}々�
 const HAN_BLOCK = /[\p{Script=Han}々〆ヶ]+/gu;
 const LEGACY_RUBY = /([\p{Script=Han}々〆ヶ]+)\{([^{}|\n]+)\}/gu;
 const ADVANCED_RUBY = /\{([^{}|\n]+)\|([^{}\n]+)\}/gu;
-const RENDERED_BLOCK_SELECTOR =
-	'p, li, dt, dd, td, th, figcaption, h1, h2, h3, h4, h5, h6';
-const RENDERED_TEXT_EXCLUSION_SELECTOR =
-	'code, pre, kbd, samp, script, style, textarea, input, ruby, rt, .math, .frontmatter';
 
 function isEscaped(text: string, index: number): boolean {
 	let slashCount = 0;
@@ -363,77 +366,32 @@ function restoreGeneratedRuby(root: ParentNode): void {
 	for (const parent of parents) parent.normalize();
 }
 
-interface RenderedTextPart {
-	node: Text;
-	start: number;
-	end: number;
-}
-
-function renderedTextGroups(root: HTMLElement): Map<HTMLElement, Text[]> {
-	const containingBlock = root.closest<HTMLElement>(RENDERED_BLOCK_SELECTOR);
-	const scope = containingBlock ?? root;
-	const groups = new Map<HTMLElement, Text[]>();
-	const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, {
-		acceptNode(node) {
-			const parent = node.parentElement;
-			if (!parent || !node.nodeValue) return NodeFilter.FILTER_REJECT;
-			if (parent.closest(RENDERED_TEXT_EXCLUSION_SELECTOR)) {
-				return NodeFilter.FILTER_REJECT;
-			}
-			return NodeFilter.FILTER_ACCEPT;
-		},
-	});
-
-	while (walker.nextNode()) {
-		const node = walker.currentNode as Text;
-		const block = node.parentElement?.closest<HTMLElement>(
-			RENDERED_BLOCK_SELECTOR,
+function replaceRenderedMatches(
+	parts: RenderedTextPart[],
+	matches: RubyMatch[],
+): void {
+	for (const match of [...matches].reverse()) {
+		const startPart = parts.find(
+			(part) => match.start >= part.start && match.start < part.end,
 		);
-		const group = block && scope.contains(block) ? block : scope;
-		const nodes = groups.get(group) ?? [];
-		nodes.push(node);
-		groups.set(group, nodes);
-	}
-	return groups;
-}
+		const endPart = parts.find(
+			(part) => match.end > part.start && match.end <= part.end,
+		);
+		if (!startPart?.node.isConnected || !endPart?.node.isConnected) continue;
 
+		const range = document.createRange();
+		range.setStart(startPart.node, match.start - startPart.start);
+		range.setEnd(endPart.node, match.end - endPart.start);
+		range.deleteContents();
+		range.insertNode(createRubyElement(match));
+		range.detach();
+	}
+}
 function renderAuthoredRuby(root: HTMLElement): void {
-	for (const nodes of renderedTextGroups(root).values()) {
-		const parts: RenderedTextPart[] = [];
-		let text = '';
-		for (const node of nodes) {
-			const value = node.nodeValue ?? '';
-			const start = text.length;
-			text += value;
-			parts.push({ node, start, end: text.length });
-		}
-
-		const matches = extractRuby(text);
-		for (const match of matches.reverse()) {
-			const startPart = parts.find(
-				(part) => match.start >= part.start && match.start < part.end,
-			);
-			const endPart = parts.find(
-				(part) => match.end > part.start && match.end <= part.end,
-			);
-			if (!startPart?.node.isConnected || !endPart?.node.isConnected) continue;
-
-			const range = document.createRange();
-			range.setStart(startPart.node, match.start - startPart.start);
-			range.setEnd(endPart.node, match.end - endPart.start);
-			range.deleteContents();
-			range.insertNode(createRubyElement(match));
-			range.detach();
-		}
+	for (const nodes of renderedTextRuns(root)) {
+		const { parts, text } = renderedTextParts(nodes);
+		replaceRenderedMatches(parts, extractRuby(text));
 	}
-}
-
-function renderedBlockContainsRawRuby(node: Node, root: HTMLElement): boolean {
-	const parent = node.parentElement;
-	if (!parent) return false;
-	const block = parent.closest<HTMLElement>(RENDERED_BLOCK_SELECTOR);
-	const container = block && root.contains(block) ? block : root;
-	return /[{}]/u.test(container.textContent ?? '');
 }
 
 function mergeAdjacentAutomaticRuby(root: HTMLElement): void {
@@ -1358,56 +1316,28 @@ export default class CustomFuriganaPlugin extends Plugin {
 		renderAuthoredRuby(root);
 
 		if (this.settings.mode !== 'dictionary') return;
-		const autoWalker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-			acceptNode(node) {
-				const parent = node.parentElement;
-				const text = node.nodeValue;
-				if (!parent || !text || !/\p{Script=Han}/u.test(text)) {
-					return NodeFilter.FILTER_REJECT;
-				}
-				if (
-					renderedBlockContainsRawRuby(node, root) ||
-					parent.closest(
-						RENDERED_TEXT_EXCLUSION_SELECTOR,
-					)
-				) {
-					return NodeFilter.FILTER_REJECT;
-				}
-				return NodeFilter.FILTER_ACCEPT;
-			},
-		});
-		const autoNodes: Text[] = [];
-		while (autoWalker.nextNode()) autoNodes.push(autoWalker.currentNode as Text);
-
-		for (const node of autoNodes) {
+		for (const nodes of renderedTextRuns(root)) {
 			if (renderRevision !== this.settingsRevision) return;
-			if (!node.parentNode) continue;
-			const text = node.nodeValue ?? '';
+			if (
+				nodes.length === 0 ||
+				nodes.some((node) => renderedBlockContainsRawRuby(node, root))
+			) {
+				continue;
+			}
+			const { parts, text } = renderedTextParts(nodes);
+			if (!/\p{Script=Han}/u.test(text)) continue;
 			try {
-				const matches = (await this.autoFurigana.annotateText(text)).filter(
-					(match) => this.settings.autoLevelEnabled[match.jlptLevel],
-				);
+				const matches = (await this.autoFurigana.annotateText(text))
+					.filter((match) => this.settings.autoLevelEnabled[match.jlptLevel])
+					.map(autoMatchToRubyMatch);
 				if (
 					renderRevision !== this.settingsRevision ||
 					matches.length === 0 ||
-					!node.parentNode ||
-					node.nodeValue !== text ||
-					node.parentElement?.closest('ruby, rt')
+					!renderedTextPartsAreCurrent(parts)
 				) {
 					continue;
 				}
-
-				const fragment = createFragment();
-				let cursor = 0;
-				for (const match of matches) {
-					fragment.appendText(text.slice(cursor, match.start));
-					fragment.appendChild(
-						createRubyElement(autoMatchToRubyMatch(match)),
-					);
-					cursor = match.end;
-				}
-				fragment.appendText(text.slice(cursor));
-				node.parentNode.replaceChild(fragment, node);
+				replaceRenderedMatches(parts, matches);
 			} catch (error) {
 				console.warn('Custom Furigana automatic reading failed', error);
 			}
