@@ -1131,7 +1131,9 @@ export default class CustomFuriganaPlugin extends Plugin {
 		this.registerMarkdownPostProcessor((element) => {
 			if (Platform.isMobileApp) {
 				this.prepareRenderedFurigana(element);
-				this.queueReadingViewProcessing();
+				if (this.settings.mode === 'dictionary') {
+					this.queueReadingViewProcessing();
+				}
 				return;
 			}
 			return this.processRenderedFurigana(element);
@@ -1228,6 +1230,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 			document,
 			'scroll',
 			() => {
+				if (Platform.isMobileApp && this.settings.mode !== 'dictionary') return;
 				if (Platform.isMobileApp) this.readingViewportRevision += 1;
 				this.queueReadingViewProcessing();
 			},
@@ -1396,6 +1399,13 @@ export default class CustomFuriganaPlugin extends Plugin {
 
 	private startReadingViewObserver(): void {
 		this.readingViewObserver?.disconnect();
+		// Obsidian's Markdown post processor and workspace events already cover
+		// mobile view changes. Observing the entire document there can feed our
+		// own ruby DOM updates back into another full reading-view pass.
+		if (Platform.isMobileApp) {
+			this.readingViewObserver = null;
+			return;
+		}
 		this.readingViewObserver = new MutationObserver((mutations) => {
 			if (
 				mutations.some((mutation) => {
@@ -1433,6 +1443,15 @@ export default class CustomFuriganaPlugin extends Plugin {
 		);
 		if (Platform.isMobileApp) {
 			views = views
+				.sort((left, right) => {
+					const leftActive = left.closest('.workspace-leaf.mod-active')
+						? 1
+						: 0;
+					const rightActive = right.closest('.workspace-leaf.mod-active')
+						? 1
+						: 0;
+					return rightActive - leftActive;
+				})
 				.filter(
 					(view) =>
 						Boolean(view.closest('.workspace-leaf.mod-active')) ||
@@ -1446,9 +1465,13 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private async processReadingView(view: HTMLElement): Promise<void> {
 		if (this.readingViewsInProgress.has(view)) return;
 		const revision = this.settingsRevision;
-		const viewportRevision = this.readingViewportRevision;
+		const usesViewportRevision =
+			Platform.isMobileApp && this.settings.mode === 'dictionary';
+		const viewportRevision = usesViewportRevision
+			? this.readingViewportRevision
+			: 0;
 		const signature = `${renderedSourceSignature(view, revision)}:${
-			Platform.isMobileApp ? viewportRevision : 0
+			viewportRevision
 		}`;
 		if (this.readingViewSignatures.get(view) === signature) return;
 
@@ -1460,10 +1483,11 @@ export default class CustomFuriganaPlugin extends Plugin {
 			const finalSignature = `${renderedSourceSignature(
 				view,
 				this.settingsRevision,
-			)}:${Platform.isMobileApp ? viewportRevision : 0}`;
+			)}:${viewportRevision}`;
 			if (
 				revision === this.settingsRevision &&
-				viewportRevision === this.readingViewportRevision &&
+				(!usesViewportRevision ||
+					viewportRevision === this.readingViewportRevision) &&
 				finalSignature === signature
 			) {
 				this.readingViewSignatures.set(view, finalSignature);

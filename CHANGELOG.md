@@ -6,6 +6,8 @@
 - Process automatic Reading View ruby only for the active, near-viewport content on mobile and yield between batches.
 - Debounce mobile scroll and DOM updates instead of starting work during an ongoing render burst.
 - Load the optional Korean dictionary only when a Korean dictionary search is requested on mobile.
+- Do not rescan an entire Reading View on mobile scroll in Visible or Hidden mode.
+- Avoid mobile feedback loops by relying on Obsidian's Markdown render events instead of observing every document mutation.
 
 ## 4.0.9
 
