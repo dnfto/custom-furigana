@@ -1086,6 +1086,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private readingViewObserver: MutationObserver | null = null;
 	private readingViewportRevision = 0;
 	private readonly readingViewSignatures = new WeakMap<HTMLElement, string>();
+	private readonly readingViewPreparedRevisions = new WeakMap<
+		HTMLElement,
+		number
+	>();
 	private readonly readingViewsInProgress = new WeakSet<HTMLElement>();
 	private readonly localizedCommands: Array<{
 		command: Command;
@@ -1465,6 +1469,8 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private async processReadingView(view: HTMLElement): Promise<void> {
 		if (this.readingViewsInProgress.has(view)) return;
 		const revision = this.settingsRevision;
+		const needsFullPreparation =
+			this.readingViewPreparedRevisions.get(view) !== revision;
 		const usesViewportRevision =
 			Platform.isMobileApp && this.settings.mode === 'dictionary';
 		const viewportRevision = usesViewportRevision
@@ -1477,7 +1483,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 
 		this.readingViewsInProgress.add(view);
 		try {
-			await this.processRenderedFurigana(view);
+			await this.processRenderedFurigana(view, needsFullPreparation);
+			if (revision === this.settingsRevision) {
+				this.readingViewPreparedRevisions.set(view, revision);
+			}
 		} finally {
 			this.readingViewsInProgress.delete(view);
 			const finalSignature = `${renderedSourceSignature(
@@ -1511,7 +1520,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 		renderAuthoredRuby(root);
 	}
 
-	private async processRenderedFurigana(root: HTMLElement): Promise<void> {
+	private async processRenderedFurigana(
+		root: HTMLElement,
+		prepareWholeRoot = true,
+	): Promise<void> {
 		if (Platform.isMobileApp) {
 			const preview = root.matches('.markdown-preview-view')
 				? root
@@ -1526,7 +1538,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 		}
 
 		const renderRevision = this.settingsRevision;
-		this.prepareRenderedFurigana(root);
+		if (prepareWholeRoot) this.prepareRenderedFurigana(root);
 
 		if (this.settings.mode !== 'dictionary') return;
 		let processedJapaneseRuns = 0;

@@ -8,6 +8,7 @@
 - Load the optional Korean dictionary only when a Korean dictionary search is requested on mobile.
 - Do not rescan an entire Reading View on mobile scroll in Visible or Hidden mode.
 - Avoid mobile feedback loops by relying on Obsidian's Markdown render events instead of observing every document mutation.
+- Keep already generated automatic ruby intact while processing newly visible mobile content.
 
 ## 4.0.9
 
