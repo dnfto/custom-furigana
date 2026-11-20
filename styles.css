@@ -154,6 +154,91 @@ button.custom-furigana-result.is-selected {
 	font-size: var(--font-ui-smaller);
 }
 
+/* ------------------------------------------------------------------
+   Automatic ruby in the editor (Live Preview)
+   The source text is never replaced or hidden: the kanji stay real text
+   and the reading only lives in a data-cf-rt attribute, drawn above them
+   by ::after. CodeMirror's DOM reader can therefore never pick up a kana,
+   and touch selection / IME composition keep working.
+   ------------------------------------------------------------------ */
+.cm-content .custom-furigana-editor-auto {
+	position: relative;
+	/* Widen the word box by the difference when the reading is wider than the
+	   base, which approximates a native ruby box */
+	padding-inline: calc(
+		max(
+				0em,
+				var(--cf-rt-chars, 0) * var(--custom-furigana-size, 0.55em) -
+					var(--cf-base-chars, 1) * 1em
+			) /
+			2
+	);
+}
+
+.cm-content .custom-furigana-editor-auto::after {
+	content: attr(data-cf-rt);
+	position: absolute;
+	left: 50%;
+	bottom: 100%;
+	transform: translateX(-50%);
+	margin-bottom: 0.02em;
+	font-size: var(--custom-furigana-size, 0.55em);
+	font-weight: 500;
+	line-height: 1;
+	letter-spacing: 0;
+	white-space: nowrap;
+	text-decoration: none;
+	pointer-events: none;
+	user-select: none;
+	color: var(--custom-furigana-auto-light, var(--interactive-accent));
+}
+
+body.theme-dark .cm-content .custom-furigana-editor-auto::after {
+	color: var(--custom-furigana-auto-dark, var(--interactive-accent));
+}
+
+.cm-content .custom-furigana-editor-auto[data-jlpt="N5"] {
+	--custom-furigana-auto-light: var(--custom-furigana-light-n5-color, #adadad);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n5-color, #adadad);
+}
+
+.cm-content .custom-furigana-editor-auto[data-jlpt="N4"] {
+	--custom-furigana-auto-light: var(--custom-furigana-light-n4-color, #84a98b);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n4-color, #84a98b);
+}
+
+.cm-content .custom-furigana-editor-auto[data-jlpt="N3"] {
+	--custom-furigana-auto-light: var(--custom-furigana-light-n3-color, #ffe1ad);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n3-color, #ffe1ad);
+}
+
+.cm-content .custom-furigana-editor-auto[data-jlpt="N2"] {
+	--custom-furigana-auto-light: var(--custom-furigana-light-n2-color, #93c0c8);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n2-color, #ffd6d6);
+}
+
+.cm-content .custom-furigana-editor-auto[data-jlpt="N1"] {
+	--custom-furigana-auto-light: var(--custom-furigana-light-n1-color, #1971c2);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-n1-color, #e794a7);
+}
+
+.cm-content .custom-furigana-editor-auto[data-jlpt="unlisted"] {
+	--custom-furigana-auto-light: var(--custom-furigana-light-unlisted-color, #7048e8);
+	--custom-furigana-auto-dark: var(--custom-furigana-dark-unlisted-color, #b197fc);
+}
+
+/* Leave room above lines that contain ruby so it never overlaps the line above */
+.cm-line:has(> .custom-furigana-editor-auto),
+.cm-line:has(.custom-furigana-editor-auto) {
+	line-height: 1.95;
+}
+
+body.custom-furigana-mode-visible .cm-content .custom-furigana-editor-auto::after,
+body.custom-furigana-mode-hidden .cm-content .custom-furigana-editor-auto::after,
+body.custom-furigana-mode-hidden .custom-furigana-editor-ruby > rt {
+	display: none;
+}
+
 @media (hover: none) {
 	.custom-furigana-modal-help {
 		display: none;

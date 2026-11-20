@@ -49,6 +49,12 @@ import {
 	renderedTextRuns,
 	type RenderedTextPart,
 } from './renderedText';
+import {
+	automaticRubyBase,
+	generatedRubySource,
+	restoreGeneratedRuby,
+	unwrapAutomaticRuby,
+} from './renderedRuby';
 
 type FuriganaMode = 'dictionary' | 'visible' | 'hidden';
 type RubySyntax = 'legacy' | 'advanced';
@@ -295,6 +301,7 @@ function stripFurigana(text: string): string {
 
 function createRubyElement(
 	match: Pick<RubyMatch, 'base' | 'reading' | 'syntax' | 'jlptLevel'>,
+	interactive = true,
 ): HTMLElement {
 	const ruby = createEl('ruby');
 	ruby.className = `custom-furigana-ruby ${
@@ -304,37 +311,13 @@ function createRubyElement(
 	}`;
 	ruby.dataset.syntax = match.syntax;
 	if (match.jlptLevel) ruby.dataset.jlpt = match.jlptLevel;
-	ruby.tabIndex = 0;
+	// Only static Reading View markup gets a focusable ruby: a focusable element
+	// inside the editor breaks Android touch selection and the IME focus.
+	if (interactive) ruby.tabIndex = 0;
 	ruby.setAttribute('aria-label', `${match.base}, ${match.reading}`);
 	ruby.appendText(match.base);
 	ruby.createEl('rt', { text: match.reading });
 	return ruby;
-}
-
-function automaticRubyBase(node: ChildNode | null): string | null {
-	if (!(node instanceof HTMLElement)) return null;
-	if (!node.matches('ruby.custom-furigana-auto-ruby')) return null;
-	let base = '';
-	for (const child of Array.from(node.childNodes)) {
-		if (child instanceof HTMLElement && child.tagName === 'RT') continue;
-		base += child.textContent ?? '';
-	}
-	return base || null;
-}
-
-function generatedRubySource(ruby: HTMLElement): string {
-	const base = automaticRubyBase(ruby) ?? Array.from(ruby.childNodes)
-		.filter(
-			(child) =>
-				!(child instanceof HTMLElement && child.tagName === 'RT'),
-		)
-		.map((child) => child.textContent ?? '')
-		.join('');
-	const reading = ruby.querySelector(':scope > rt')?.textContent ?? '';
-	const syntax = ruby.dataset.syntax as RubySource | undefined;
-	if (syntax === 'auto') return base;
-	if (syntax === 'advanced') return `{${base}|${reading}}`;
-	return `${base}{${reading}}`;
 }
 
 function renderedSourceSignature(root: HTMLElement, revision: number): string {
@@ -364,36 +347,6 @@ function renderedSourceSignature(root: HTMLElement, revision: number): string {
 	};
 	visit(root);
 	return `${revision}:${length}:${hash >>> 0}`;
-}
-
-function unwrapAutomaticRuby(root: HTMLElement): void {
-	const parents = new Set<ParentNode>();
-	for (const ruby of Array.from(
-		root.querySelectorAll('ruby.custom-furigana-auto-ruby'),
-	)) {
-		const base = automaticRubyBase(ruby);
-		if (!base || !ruby.parentNode) continue;
-		const parent = ruby.parentNode;
-		parent.replaceChild(document.createTextNode(base), ruby);
-		parents.add(parent);
-	}
-	for (const parent of parents) parent.normalize();
-	root.normalize();
-}
-
-function restoreGeneratedRuby(root: ParentNode): void {
-	const parents = new Set<ParentNode>();
-	for (const ruby of Array.from(
-		root.querySelectorAll<HTMLElement>(
-			'ruby.custom-furigana-ruby[data-syntax]',
-		),
-	)) {
-		if (!ruby.parentNode) continue;
-		const parent = ruby.parentNode;
-		parent.replaceChild(document.createTextNode(generatedRubySource(ruby)), ruby);
-		parents.add(parent);
-	}
-	for (const parent of parents) parent.normalize();
 }
 
 function replaceRenderedMatches(
@@ -492,18 +445,20 @@ class FuriganaWidget extends WidgetType {
 	}
 
 	toDOM(view: EditorView): HTMLElement {
-		const ruby = createRubyElement(this.match);
+		// In the editor the widget is only used for authored ruby, where the
+		// `{漢字|よみ}` markup has to be hidden. Automatic ruby renders through
+		// `buildDecorations` (mark + attribute) instead.
+		const ruby = createRubyElement(this.match, false);
 		ruby.classList.add('custom-furigana-editor-ruby');
+		// `cmIgnore` makes CodeMirror's DOM text reader skip this node entirely, so
+		// a re-parented ruby can never leak its <rt> text into the document.
+		(ruby as HTMLElement & { cmIgnore?: boolean }).cmIgnore = true;
 		ruby.addEventListener('mousedown', (event) => {
-			if (event.button !== 0) return;
+			if (event.button !== 0 || view.composing) return;
 			event.preventDefault();
+			// Land after the `{` so the caret sits on the base and reveals the markup
 			view.dispatch({
-				selection: {
-					anchor:
-						this.match.syntax === 'auto'
-							? this.match.start
-							: this.match.start + 1,
-				},
+				selection: { anchor: this.match.start + 1 },
 			});
 			view.focus();
 		});
@@ -558,14 +513,50 @@ function visibleTextRanges(
 	return [...ranges.values()];
 }
 
-function renderedRunIsNearViewport(nodes: Text[]): boolean {
-	const parent = nodes.find((node) => node.isConnected)?.parentElement;
-	if (!parent) return false;
-	const rect = parent.getBoundingClientRect();
-	const viewportHeight =
-		window.innerHeight || document.documentElement.clientHeight || 1;
-	return rect.bottom >= -viewportHeight && rect.top <= viewportHeight * 2;
+function isEditableCodeMirrorContent(root: HTMLElement): boolean {
+	return Boolean(
+		root.closest('.cm-content') &&
+			!root.closest('[contenteditable="false"]'),
+	);
 }
+
+function mobileRenderedRoots(root: HTMLElement): HTMLElement[] {
+	const splitContainer = (element: HTMLElement): HTMLElement[] => {
+		const children = Array.from(element.children).filter(
+			(child): child is HTMLElement => child instanceof HTMLElement,
+		);
+		if (children.length === 0) return [element];
+
+		if (
+			element.matches(
+				'.markdown-preview-view, .markdown-preview-sizer, .markdown-preview-section',
+			)
+		) {
+			return children.flatMap(splitContainer);
+		}
+
+		const renderedBlocks = children.filter((child) =>
+			Array.from(child.classList).some((name) => name.startsWith('el-')),
+		);
+		return renderedBlocks.length > 0 ? renderedBlocks : [element];
+	};
+
+	return splitContainer(root);
+}
+
+/**
+ * Automatic ruby in the editor: **the document text is never replaced**.
+ * A mark decoration wraps the original text and keeps the reading in a
+ * `data-cf-rt` attribute, which CSS renders above the kanji through `::after`.
+ *
+ * Why not a `Decoration.replace` widget:
+ * - the document text stays real text, so CodeMirror's DOM reader can never
+ *   read a kana that is not in the document — the source cannot be polluted;
+ * - nothing is hidden, so touch selection anchors and handles behave natively;
+ * - the decoration only changes attributes, never structure, so it does not
+ *   interrupt an IME composition.
+ */
+const AUTO_RUBY_MARK_CLASS = 'custom-furigana-editor-auto';
 
 function buildDecorations(
 	view: EditorView,
@@ -590,6 +581,9 @@ function buildDecorations(
 			if (!match.jlptLevel || !plugin.settings.autoLevelEnabled[match.jlptLevel]) {
 				continue;
 			}
+			// Positions come from an earlier document state: drop anything whose
+			// underlying text changed in the meantime.
+			if (view.state.doc.sliceString(match.start, match.end) !== match.base) continue;
 			if (manualMatches.some((manual) => overlaps(manual, match))) continue;
 			collected.set(`${match.start}:${match.end}`, match);
 		}
@@ -601,19 +595,55 @@ function buildDecorations(
 	let previousEnd = -1;
 	for (const match of sorted) {
 		if (match.start < previousEnd) continue;
-		if (cursorTouchesMatch(view, match) || isInsideCode(view, match.start)) continue;
-		builder.add(
-			match.start,
-			match.end,
-			Decoration.replace({
-				widget: new FuriganaWidget(match, plugin),
-				inclusive: false,
-			}),
-		);
+		if (isInsideCode(view, match.start)) continue;
+		if (match.syntax === 'auto') {
+			builder.add(
+				match.start,
+				match.end,
+				Decoration.mark({
+					class: `custom-furigana-ruby custom-furigana-auto-ruby ${AUTO_RUBY_MARK_CLASS}`,
+					attributes: {
+						'data-cf-rt': match.reading,
+						'data-jlpt': match.jlptLevel ?? 'unlisted',
+						// Reserve horizontal room when the reading is wider than the base
+						// (e.g. 塊 / かたまり), otherwise neighbouring readings collide.
+						// Only the counts reach CSS; no text is added to the document.
+						style: `--cf-rt-chars:${[...match.reading].length};--cf-base-chars:${[...match.base].length}`,
+					},
+				}),
+			);
+		} else {
+			// Authored ruby is real markup in the note, so hide the braces to show it
+			if (cursorTouchesMatch(view, match)) continue;
+			builder.add(
+				match.start,
+				match.end,
+				Decoration.replace({
+					widget: new FuriganaWidget(match, plugin),
+					inclusive: false,
+				}),
+			);
+		}
 		previousEnd = match.end;
 	}
 
 	return builder.finish();
+}
+
+/** Wait for typing to settle before hitting the dictionary shards again */
+const AUTOMATIC_REFRESH_DELAY_MS = 180;
+
+function sameMatches(left: RubyMatch[], right: RubyMatch[]): boolean {
+	if (left.length !== right.length) return false;
+	return left.every((match, index) => {
+		const other = right[index];
+		return (
+			match.start === other.start &&
+			match.end === other.end &&
+			match.reading === other.reading &&
+			match.base === other.base
+		);
+	});
 }
 
 function createLivePreviewExtension(plugin: CustomFuriganaPlugin) {
@@ -621,61 +651,155 @@ function createLivePreviewExtension(plugin: CustomFuriganaPlugin) {
 		class implements PluginValue {
 			decorations: DecorationSet = Decoration.none;
 			private revision = -1;
-			private generation = 0;
+			private timer: number | null = null;
+			private composing = false;
+			private destroyed = false;
+			private automaticGeneration = 0;
+			private appliedAutomatic: RubyMatch[] = [];
+			private hasManualRuby = false;
 
 			constructor(view: EditorView) {
 				this.rebuild(view);
 			}
 
 			update(update: ViewUpdate): void {
+				const view = update.view;
+
+				// ---------- IME composition ----------
+				// While a composition is active, any structural change to the editor
+				// DOM makes Android WebView commit the preedit early (typing `k` yields
+				// か instead of letting かみなり build up). So: no rebuild and no dispatch
+				// during composition; do one catch-up rebuild once it ends.
+				if (view.composing) {
+					this.composing = true;
+					return;
+				}
+				if (this.composing) {
+					this.composing = false;
+					this.rebuild(view);
+					return;
+				}
+
+				if (update.docChanged) this.mapAutomatic(update);
+
+				const manualSelectionChange =
+					update.selectionSet && this.hasManualRuby;
 				if (
 					update.docChanged ||
-					update.selectionSet ||
+					manualSelectionChange ||
 					update.viewportChanged ||
 					this.revision !== plugin.settingsRevision
 				) {
-					this.rebuild(update.view);
+					this.rebuild(view);
 				}
 			}
 
 			destroy(): void {
-				this.generation += 1;
+				this.destroyed = true;
+				this.automaticGeneration += 1;
+				this.clearTimer();
+			}
+
+			private clearTimer(): void {
+				if (this.timer !== null) {
+					window.clearTimeout(this.timer);
+					this.timer = null;
+				}
+			}
+
+			/** Map known matches through the change so typing does not flash the ruby */
+			private mapAutomatic(update: ViewUpdate): void {
+				if (this.appliedAutomatic.length === 0) return;
+				const mapped: RubyMatch[] = [];
+				for (const match of this.appliedAutomatic) {
+					const start = update.changes.mapPos(match.start, 1);
+					const end = update.changes.mapPos(match.end, -1);
+					if (end > start) mapped.push({ ...match, start, end });
+				}
+				this.appliedAutomatic = mapped;
 			}
 
 			private rebuild(view: EditorView): void {
 				this.revision = plugin.settingsRevision;
-				const generation = ++this.generation;
-				this.decorations = buildDecorations(view, plugin);
+				this.decorations = buildDecorations(
+					view,
+					plugin,
+					this.appliedAutomatic,
+				);
+				// Only authored ruby depends on the selection (it reveals the markup)
+				this.hasManualRuby = this.containsManualRuby(view);
+				this.scheduleAutomatic(view);
+			}
+
+			private containsManualRuby(view: EditorView): boolean {
+				for (const range of visibleTextRanges(view)) {
+					if (extractRuby(range.text, range.from).length > 0) return true;
+				}
+				return false;
+			}
+
+			private scheduleAutomatic(view: EditorView): void {
+				const generation = ++this.automaticGeneration;
+				this.clearTimer();
 				if (
 					plugin.settings.mode !== 'dictionary' ||
 					!plugin.settings.livePreview
 				) {
 					return;
 				}
+				this.timer = window.setTimeout(() => {
+					this.timer = null;
+					void this.refreshAutomatic(view, generation);
+				}, AUTOMATIC_REFRESH_DELAY_MS);
+			}
 
-				const ranges = visibleTextRanges(view);
-				void Promise.all(
-					ranges.map((range) =>
-						plugin.autoFurigana.annotateText(range.text, range.from),
-					),
-				)
-					.then((results) => {
-						if (
-							generation !== this.generation ||
-							this.revision !== plugin.settingsRevision
-						) {
-							return;
-						}
-						this.decorations = buildDecorations(
-							view,
-							plugin,
-							results.flat().map(autoMatchToRubyMatch),
-						);
-						view.dispatch({});
-					})
-					.catch((error) => {
-						console.warn('Custom Furigana automatic reading failed', error);
-					});
+			private async refreshAutomatic(
+				view: EditorView,
+				generation: number,
+			): Promise<void> {
+				if (generation !== this.automaticGeneration || this.destroyed) return;
+				if (this.composing || view.composing) {
+					// Composition still running; the post-composition rebuild reschedules
+					return;
+				}
+				const revision = plugin.settingsRevision;
+				let results: RubyMatch[] = [];
+				try {
+					// Query lines in parallel; the engine already deduplicates shard loads
+					const perRange = await Promise.all(
+						visibleTextRanges(view).map(async (range) => {
+							const matches = await plugin.autoFurigana.annotateText(
+								range.text,
+								range.from,
+							);
+							return matches.map(autoMatchToRubyMatch);
+						}),
+					);
+					results = perRange.flat();
+				} catch (error) {
+					console.warn('Custom Furigana automatic reading failed', error);
+					return;
+				}
+				if (
+					generation !== this.automaticGeneration ||
+					revision !== plugin.settingsRevision ||
+					this.destroyed
+				) {
+					return;
+				}
+				if (view.composing) {
+					this.scheduleAutomatic(view);
+					return;
+				}
+
+				results.sort((left, right) => left.start - right.start);
+				if (sameMatches(this.appliedAutomatic, results)) return;
+				if (generation !== this.automaticGeneration || this.destroyed) return;
+				this.appliedAutomatic = results;
+				this.decorations = buildDecorations(view, plugin, results);
+				// Empty transaction: makes the view re-read this plugin's decorations
+				// without touching the document.
+				view.dispatch({});
 			}
 		},
 		{ decorations: (value) => value.decorations },
@@ -1084,7 +1208,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private ribbonButton: HTMLElement | null = null;
 	private readingViewTimer: number | null = null;
 	private readingViewObserver: MutationObserver | null = null;
-	private readingViewportRevision = 0;
+	private mobileReadingObserver: IntersectionObserver | null = null;
+	private mobileReadingTimer: number | null = null;
+	private mobileReadingDrainInProgress = false;
+	private readonly mobileReadingRoots = new Set<HTMLElement>();
 	private readonly readingViewSignatures = new WeakMap<HTMLElement, string>();
 	private readonly readingViewPreparedRevisions = new WeakMap<
 		HTMLElement,
@@ -1131,12 +1258,17 @@ export default class CustomFuriganaPlugin extends Plugin {
 		await this.loadSettings();
 		this.applySettings();
 		this.autoFurigana = new AutoFuriganaEngine(this);
+		if (Platform.isMobileApp) this.startMobileReadingObserver();
 
 		this.registerMarkdownPostProcessor((element) => {
 			if (Platform.isMobileApp) {
 				this.prepareRenderedFurigana(element);
+				this.readingViewPreparedRevisions.set(
+					element,
+					this.settingsRevision,
+				);
 				if (this.settings.mode === 'dictionary') {
-					this.queueReadingViewProcessing();
+					this.observeMobileReadingRoot(element);
 				}
 				return;
 			}
@@ -1230,25 +1362,13 @@ export default class CustomFuriganaPlugin extends Plugin {
 			if (status === 'error') new Notice(this.t('dictionaryError'));
 		});
 		void this.localDictionary.initialize();
-		this.registerDomEvent(
-			document,
-			'scroll',
-			() => {
-				if (Platform.isMobileApp && this.settings.mode !== 'dictionary') return;
-				if (Platform.isMobileApp) this.readingViewportRevision += 1;
-				this.queueReadingViewProcessing();
-			},
-			true,
-		);
 		this.registerEvent(
 			this.app.workspace.on('active-leaf-change', () => {
-				if (Platform.isMobileApp) this.readingViewportRevision += 1;
 				this.queueReadingViewProcessing();
 			}),
 		);
 		this.registerEvent(
 			this.app.workspace.on('file-open', () => {
-				if (Platform.isMobileApp) this.readingViewportRevision += 1;
 				this.queueReadingViewProcessing();
 			}),
 		);
@@ -1267,8 +1387,15 @@ export default class CustomFuriganaPlugin extends Plugin {
 			window.clearTimeout(this.readingViewTimer);
 			this.readingViewTimer = null;
 		}
+		if (this.mobileReadingTimer !== null) {
+			window.clearTimeout(this.mobileReadingTimer);
+			this.mobileReadingTimer = null;
+		}
 		this.readingViewObserver?.disconnect();
 		this.readingViewObserver = null;
+		this.mobileReadingObserver?.disconnect();
+		this.mobileReadingObserver = null;
+		this.mobileReadingRoots.clear();
 		this.localDictionary?.destroy();
 		this.autoFurigana?.clear();
 		restoreGeneratedRuby(document);
@@ -1298,12 +1425,14 @@ export default class CustomFuriganaPlugin extends Plugin {
 		type LegacySettings = Omit<Partial<FuriganaSettings>, 'rubySize'> & {
 			displayMode?: 'hover' | 'always';
 			rubyColor?: string;
+			rubyScope?: string;
 			rubySize?: string | number;
 		};
 		const saved = ((await this.loadData()) ?? {}) as LegacySettings;
 		const {
 			displayMode: _legacyDisplayMode,
 			rubyColor: legacyRubyColor,
+			rubyScope: _legacyRubyScope,
 			...current
 		} = saved;
 		const defaults = createDefaultSettings();
@@ -1395,10 +1524,87 @@ export default class CustomFuriganaPlugin extends Plugin {
 				continue;
 			}
 			const editorView = view.editor?.cm;
-			editorView?.dispatch({});
+			if (editorView && !editorView.composing) editorView.dispatch({});
 			if (!Platform.isMobileApp) view.previewMode?.rerender?.(true);
 		}
 		this.queueReadingViewProcessing();
+	}
+
+	private startMobileReadingObserver(): void {
+		this.mobileReadingObserver?.disconnect();
+		if (!('IntersectionObserver' in window)) {
+			this.mobileReadingObserver = null;
+			return;
+		}
+		this.mobileReadingObserver = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (!entry.isIntersecting || !(entry.target instanceof HTMLElement)) {
+						continue;
+					}
+					this.mobileReadingObserver?.unobserve(entry.target);
+					this.queueMobileReadingRoot(entry.target);
+				}
+			},
+			{ rootMargin: '100% 0px 200% 0px' },
+		);
+	}
+
+	private observeMobileReadingRoot(root: HTMLElement): void {
+		if (!root.isConnected || isEditableCodeMirrorContent(root)) return;
+		for (const renderedRoot of mobileRenderedRoots(root)) {
+			if (!renderedRoot.isConnected) continue;
+			if (this.mobileReadingObserver) {
+				this.mobileReadingObserver.observe(renderedRoot);
+			} else {
+				this.queueMobileReadingRoot(renderedRoot);
+			}
+		}
+	}
+
+	private queueMobileReadingRoot(root: HTMLElement): void {
+		this.mobileReadingRoots.add(root);
+		if (this.mobileReadingTimer !== null || this.mobileReadingDrainInProgress) {
+			return;
+		}
+		this.mobileReadingTimer = window.setTimeout(() => {
+			this.mobileReadingTimer = null;
+			void this.drainMobileReadingRoots();
+		}, 0);
+	}
+
+	private async drainMobileReadingRoots(): Promise<void> {
+		if (this.mobileReadingDrainInProgress) return;
+		this.mobileReadingDrainInProgress = true;
+		try {
+			let lastYield = performance.now();
+			while (this.mobileReadingRoots.size > 0) {
+				const iterator = this.mobileReadingRoots.values().next();
+				if (iterator.done) break;
+				const root = iterator.value;
+				this.mobileReadingRoots.delete(root);
+				if (!root.isConnected) continue;
+
+				const revision = this.settingsRevision;
+				const needsFullPreparation =
+					this.readingViewPreparedRevisions.get(root) !== revision;
+				await this.processRenderedFurigana(root, needsFullPreparation);
+				if (root.isConnected && revision === this.settingsRevision) {
+					this.readingViewPreparedRevisions.set(root, revision);
+				}
+
+				if (performance.now() - lastYield >= 12) {
+					await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+					lastYield = performance.now();
+				}
+			}
+		} finally {
+			this.mobileReadingDrainInProgress = false;
+			if (this.mobileReadingRoots.size > 0) {
+				const iterator = this.mobileReadingRoots.values().next();
+				if (!iterator.done) this.queueMobileReadingRoot(iterator.value);
+			}
+		}
 	}
 
 	private startReadingViewObserver(): void {
@@ -1442,26 +1648,15 @@ export default class CustomFuriganaPlugin extends Plugin {
 	}
 
 	private async processReadingViews(): Promise<void> {
-		let views = Array.from(
+		const views = Array.from(
 			document.querySelectorAll<HTMLElement>('.markdown-preview-view'),
 		);
 		if (Platform.isMobileApp) {
-			views = views
-				.sort((left, right) => {
-					const leftActive = left.closest('.workspace-leaf.mod-active')
-						? 1
-						: 0;
-					const rightActive = right.closest('.workspace-leaf.mod-active')
-						? 1
-						: 0;
-					return rightActive - leftActive;
-				})
-				.filter(
-					(view) =>
-						Boolean(view.closest('.workspace-leaf.mod-active')) ||
-						view.getClientRects().length > 0,
-				)
-				.slice(0, 1);
+			const active =
+				views.find((view) => view.closest('.workspace-leaf.mod-active')) ??
+				views[0];
+			if (active) this.observeMobileReadingRoot(active);
+			return;
 		}
 		for (const view of views) await this.processReadingView(view);
 	}
@@ -1471,14 +1666,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 		const revision = this.settingsRevision;
 		const needsFullPreparation =
 			this.readingViewPreparedRevisions.get(view) !== revision;
-		const usesViewportRevision =
-			Platform.isMobileApp && this.settings.mode === 'dictionary';
-		const viewportRevision = usesViewportRevision
-			? this.readingViewportRevision
-			: 0;
-		const signature = `${renderedSourceSignature(view, revision)}:${
-			viewportRevision
-		}`;
+		const signature = renderedSourceSignature(view, revision);
 		if (this.readingViewSignatures.get(view) === signature) return;
 
 		this.readingViewsInProgress.add(view);
@@ -1489,14 +1677,12 @@ export default class CustomFuriganaPlugin extends Plugin {
 			}
 		} finally {
 			this.readingViewsInProgress.delete(view);
-			const finalSignature = `${renderedSourceSignature(
+			const finalSignature = renderedSourceSignature(
 				view,
 				this.settingsRevision,
-			)}:${viewportRevision}`;
+			);
 			if (
 				revision === this.settingsRevision &&
-				(!usesViewportRevision ||
-					viewportRevision === this.readingViewportRevision) &&
 				finalSignature === signature
 			) {
 				this.readingViewSignatures.set(view, finalSignature);
@@ -1508,6 +1694,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 	}
 
 	private prepareRenderedFurigana(root: HTMLElement): void {
+		if (isEditableCodeMirrorContent(root)) return;
 		unwrapAutomaticRuby(root);
 
 		for (const ruby of Array.from(root.querySelectorAll('ruby'))) {
@@ -1524,6 +1711,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 		root: HTMLElement,
 		prepareWholeRoot = true,
 	): Promise<void> {
+		// Never inject ruby markup into editable CodeMirror content. The editor
+		// uses mark decorations instead, so its DOM reader cannot import <rt> text
+		// into the Markdown source after a mobile WebView re-parenting operation.
+		if (isEditableCodeMirrorContent(root)) return;
 		if (Platform.isMobileApp) {
 			const preview = root.matches('.markdown-preview-view')
 				? root
@@ -1541,10 +1732,9 @@ export default class CustomFuriganaPlugin extends Plugin {
 		if (prepareWholeRoot) this.prepareRenderedFurigana(root);
 
 		if (this.settings.mode !== 'dictionary') return;
-		let processedJapaneseRuns = 0;
+		let lastYield = performance.now();
 		for (const nodes of renderedTextRuns(root)) {
 			if (renderRevision !== this.settingsRevision) return;
-			if (Platform.isMobileApp && !renderedRunIsNearViewport(nodes)) continue;
 			if (
 				nodes.length === 0 ||
 				nodes.some((node) => renderedBlockContainsRawRuby(node, root))
@@ -1553,9 +1743,9 @@ export default class CustomFuriganaPlugin extends Plugin {
 			}
 			const { parts, text } = renderedTextParts(nodes);
 			if (!/\p{Script=Han}/u.test(text)) continue;
-			processedJapaneseRuns += 1;
-			if (Platform.isMobileApp && processedJapaneseRuns % 8 === 0) {
+			if (Platform.isMobileApp && performance.now() - lastYield >= 12) {
 				await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+				lastYield = performance.now();
 			}
 			try {
 				const matches = (await this.autoFurigana.annotateText(text))
