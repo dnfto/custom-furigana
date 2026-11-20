@@ -162,7 +162,9 @@ button.custom-furigana-result.is-selected {
    and touch selection / IME composition keep working.
    ------------------------------------------------------------------ */
 .cm-content .custom-furigana-editor-auto {
+	display: inline-block;
 	position: relative;
+	padding-block-start: var(--custom-furigana-size, 0.55em);
 	/* Widen the word box by the difference when the reading is wider than the
 	   base, which approximates a native ruby box */
 	padding-inline: calc(
@@ -179,9 +181,8 @@ button.custom-furigana-result.is-selected {
 	content: attr(data-cf-rt);
 	position: absolute;
 	left: 50%;
-	bottom: 100%;
+	top: 0;
 	transform: translateX(-50%);
-	margin-bottom: 0.02em;
 	font-size: var(--custom-furigana-size, 0.55em);
 	font-weight: 500;
 	line-height: 1;
@@ -225,12 +226,6 @@ body.theme-dark .cm-content .custom-furigana-editor-auto::after {
 .cm-content .custom-furigana-editor-auto[data-jlpt="unlisted"] {
 	--custom-furigana-auto-light: var(--custom-furigana-light-unlisted-color, #7048e8);
 	--custom-furigana-auto-dark: var(--custom-furigana-dark-unlisted-color, #b197fc);
-}
-
-/* Leave room above lines that contain ruby so it never overlaps the line above */
-.cm-line:has(> .custom-furigana-editor-auto),
-.cm-line:has(.custom-furigana-editor-auto) {
-	line-height: 1.95;
 }
 
 body.custom-furigana-mode-visible .cm-content .custom-furigana-editor-auto::after,

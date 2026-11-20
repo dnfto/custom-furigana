@@ -103,7 +103,7 @@ export function renderedTextRuns(root: HTMLElement): Text[][] {
 			if (text.nodeValue) current.push(text);
 			return;
 		}
-		if (!(node instanceof HTMLElement)) {
+		if (!node.instanceOf(HTMLElement)) {
 			visitChildren(node);
 			return;
 		}

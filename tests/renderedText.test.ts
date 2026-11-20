@@ -7,6 +7,14 @@ import { renderedTextRuns } from '../src/renderedText';
 
 function createRoot(markup: string): HTMLElement {
 	const { document, Node, HTMLElement, Text } = parseHTML(markup).window;
+	if (!Node.prototype.instanceOf) {
+		Object.defineProperty(Node.prototype, 'instanceOf', {
+			configurable: true,
+			value(this: Node, type: { prototype: object }) {
+				return type.prototype.isPrototypeOf(this);
+			},
+		});
+	}
 	Object.assign(globalThis, { document, Node, HTMLElement, Text });
 	const root = document.querySelector<HTMLElement>('#root');
 	assert.ok(root);

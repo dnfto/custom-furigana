@@ -18,6 +18,14 @@ function createRoot(markup = ''): HTMLElement {
 	const { document, Node, HTMLElement, Text } = parseHTML(
 		`<html><body><div id="root">${markup}</div></body></html>`,
 	).window;
+	if (!Node.prototype.instanceOf) {
+		Object.defineProperty(Node.prototype, 'instanceOf', {
+			configurable: true,
+			value(this: Node, type: { prototype: object }) {
+				return type.prototype.isPrototypeOf(this);
+			},
+		});
+	}
 	Object.assign(globalThis, { document, Node, HTMLElement, Text });
 	const root = document.querySelector<HTMLElement>('#root');
 	assert.ok(root);

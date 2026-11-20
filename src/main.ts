@@ -337,7 +337,6 @@ function replaceRenderedMatches(
 		range.setEnd(endPart.node, match.end - endPart.start);
 		range.deleteContents();
 		range.insertNode(createRubyElement(match));
-		range.detach();
 	}
 }
 function renderAuthoredRuby(root: HTMLElement): void {
@@ -493,7 +492,7 @@ function isEditableCodeMirrorContent(root: HTMLElement): boolean {
 function renderedBlockRoots(root: HTMLElement): HTMLElement[] {
 	const splitContainer = (element: HTMLElement): HTMLElement[] => {
 		const children = Array.from(element.children).filter(
-			(child): child is HTMLElement => child instanceof HTMLElement,
+			(child): child is HTMLElement => child.instanceOf(HTMLElement),
 		);
 		if (children.length === 0) return [element];
 
@@ -1509,7 +1508,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 		this.readingBlockObserver = new IntersectionObserver(
 			(entries) => {
 				for (const entry of entries) {
-					if (!entry.isIntersecting || !(entry.target instanceof HTMLElement)) {
+					if (!entry.isIntersecting || !entry.target.instanceOf(HTMLElement)) {
 						continue;
 					}
 					this.readingBlockObserver?.unobserve(entry.target);
@@ -1582,8 +1581,9 @@ export default class CustomFuriganaPlugin extends Plugin {
 		this.readingViewObserver = new MutationObserver((mutations) => {
 			for (const mutation of mutations) {
 				for (const node of Array.from(mutation.addedNodes)) {
-					const element =
-						node instanceof HTMLElement ? node : node.parentElement;
+					const element = node.instanceOf(HTMLElement)
+						? node
+						: node.parentElement;
 					if (!element) continue;
 					if (
 						element.closest(

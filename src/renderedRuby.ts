@@ -2,11 +2,11 @@
 // empty Text nodes as insertion anchors; Node.normalize() would remove them.
 // renderedTextRuns/Parts already read adjacent Text nodes as one text run.
 export function automaticRubyBase(node: ChildNode | null): string | null {
-	if (!(node instanceof HTMLElement)) return null;
+	if (!node?.instanceOf(HTMLElement)) return null;
 	if (!node.matches('ruby.custom-furigana-auto-ruby')) return null;
 	let base = '';
 	for (const child of Array.from(node.childNodes)) {
-		if (child instanceof HTMLElement && child.tagName === 'RT') continue;
+		if (child.instanceOf(HTMLElement) && child.tagName === 'RT') continue;
 		base += child.textContent ?? '';
 	}
 	return base || null;
@@ -16,7 +16,7 @@ export function generatedRubySource(ruby: HTMLElement): string {
 	const base = automaticRubyBase(ruby) ?? Array.from(ruby.childNodes)
 		.filter(
 			(child) =>
-				!(child instanceof HTMLElement && child.tagName === 'RT'),
+				!(child.instanceOf(HTMLElement) && child.tagName === 'RT'),
 		)
 		.map((child) => child.textContent ?? '')
 		.join('');
