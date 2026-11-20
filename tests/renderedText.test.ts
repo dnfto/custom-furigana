@@ -60,6 +60,16 @@ const cases: Array<[string, string, string[]]> = [
 		'<div id="root"><span>初</span><code>コード</code><span>対面</span></div>',
 		['初', '対面'],
 	],
+	[
+		'internal link boundary',
+		'<div id="root"><span>前</span><a class="internal-link" data-href="Note#初対面" href="Note#初対面">初対面</a><span>後</span></div>',
+		['前', '後'],
+	],
+	[
+		'tag link boundary',
+		'<div id="root"><span>前</span><a class="tag" href="#日本語">#日本語</a><span>後</span></div>',
+		['前', '後'],
+	],
 ];
 
 for (const [name, markup, expected] of cases) {

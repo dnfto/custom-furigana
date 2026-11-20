@@ -51,7 +51,6 @@ import {
 } from './renderedText';
 import {
 	automaticRubyBase,
-	generatedRubySource,
 	restoreGeneratedRuby,
 	unwrapAutomaticRuby,
 } from './renderedRuby';
@@ -320,35 +319,6 @@ function createRubyElement(
 	return ruby;
 }
 
-function renderedSourceSignature(root: HTMLElement, revision: number): string {
-	let hash = 0x811c9dc5;
-	let length = 0;
-	const append = (value: string): void => {
-		for (let index = 0; index < value.length; index += 1) {
-			hash ^= value.charCodeAt(index);
-			hash = Math.imul(hash, 0x01000193);
-			length += 1;
-		}
-	};
-	const visit = (node: Node): void => {
-		if (node.nodeType === Node.TEXT_NODE) {
-			append(node.nodeValue ?? '');
-			return;
-		}
-		if (
-			node instanceof HTMLElement &&
-			node.matches('ruby.custom-furigana-ruby[data-syntax]')
-		) {
-			append(generatedRubySource(node));
-			return;
-		}
-		if (node instanceof HTMLElement && node.matches('br, hr')) append('\n');
-		for (const child of Array.from(node.childNodes)) visit(child);
-	};
-	visit(root);
-	return `${revision}:${length}:${hash >>> 0}`;
-}
-
 function replaceRenderedMatches(
 	parts: RenderedTextPart[],
 	matches: RubyMatch[],
@@ -520,7 +490,7 @@ function isEditableCodeMirrorContent(root: HTMLElement): boolean {
 	);
 }
 
-function mobileRenderedRoots(root: HTMLElement): HTMLElement[] {
+function renderedBlockRoots(root: HTMLElement): HTMLElement[] {
 	const splitContainer = (element: HTMLElement): HTMLElement[] => {
 		const children = Array.from(element.children).filter(
 			(child): child is HTMLElement => child instanceof HTMLElement,
@@ -1214,16 +1184,14 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private ribbonButton: HTMLElement | null = null;
 	private readingViewTimer: number | null = null;
 	private readingViewObserver: MutationObserver | null = null;
-	private mobileReadingObserver: IntersectionObserver | null = null;
-	private mobileReadingTimer: number | null = null;
-	private mobileReadingDrainInProgress = false;
-	private readonly mobileReadingRoots = new Set<HTMLElement>();
-	private readonly readingViewSignatures = new WeakMap<HTMLElement, string>();
+	private readingBlockObserver: IntersectionObserver | null = null;
+	private readingBlockTimer: number | null = null;
+	private readingBlockDrainInProgress = false;
+	private readonly pendingReadingRoots = new Set<HTMLElement>();
 	private readonly readingViewPreparedRevisions = new WeakMap<
 		HTMLElement,
 		number
 	>();
-	private readonly readingViewsInProgress = new WeakSet<HTMLElement>();
 	private readonly localizedCommands: Array<{
 		command: Command;
 		nameKey: TranslationKey;
@@ -1264,21 +1232,17 @@ export default class CustomFuriganaPlugin extends Plugin {
 		await this.loadSettings();
 		this.applySettings();
 		this.autoFurigana = new AutoFuriganaEngine(this);
-		if (Platform.isMobileApp) this.startMobileReadingObserver();
+		this.startReadingBlockObserver();
 
 		this.registerMarkdownPostProcessor((element) => {
-			if (Platform.isMobileApp) {
-				this.prepareRenderedFurigana(element);
-				this.readingViewPreparedRevisions.set(
-					element,
-					this.settingsRevision,
-				);
-				if (this.settings.mode === 'dictionary') {
-					this.observeMobileReadingRoot(element);
-				}
-				return;
+			this.prepareRenderedFurigana(element);
+			this.readingViewPreparedRevisions.set(
+				element,
+				this.settingsRevision,
+			);
+			if (this.settings.mode === 'dictionary') {
+				this.observeReadingRoot(element);
 			}
-			return this.processRenderedFurigana(element);
 		});
 		this.registerEditorExtension(createLivePreviewExtension(this));
 		this.settingTab = new CustomFuriganaSettingTab(this);
@@ -1393,15 +1357,15 @@ export default class CustomFuriganaPlugin extends Plugin {
 			window.clearTimeout(this.readingViewTimer);
 			this.readingViewTimer = null;
 		}
-		if (this.mobileReadingTimer !== null) {
-			window.clearTimeout(this.mobileReadingTimer);
-			this.mobileReadingTimer = null;
+		if (this.readingBlockTimer !== null) {
+			window.clearTimeout(this.readingBlockTimer);
+			this.readingBlockTimer = null;
 		}
 		this.readingViewObserver?.disconnect();
 		this.readingViewObserver = null;
-		this.mobileReadingObserver?.disconnect();
-		this.mobileReadingObserver = null;
-		this.mobileReadingRoots.clear();
+		this.readingBlockObserver?.disconnect();
+		this.readingBlockObserver = null;
+		this.pendingReadingRoots.clear();
 		this.localDictionary?.destroy();
 		this.autoFurigana?.clear();
 		restoreGeneratedRuby(document);
@@ -1536,59 +1500,59 @@ export default class CustomFuriganaPlugin extends Plugin {
 		this.queueReadingViewProcessing();
 	}
 
-	private startMobileReadingObserver(): void {
-		this.mobileReadingObserver?.disconnect();
+	private startReadingBlockObserver(): void {
+		this.readingBlockObserver?.disconnect();
 		if (!('IntersectionObserver' in window)) {
-			this.mobileReadingObserver = null;
+			this.readingBlockObserver = null;
 			return;
 		}
-		this.mobileReadingObserver = new IntersectionObserver(
+		this.readingBlockObserver = new IntersectionObserver(
 			(entries) => {
 				for (const entry of entries) {
 					if (!entry.isIntersecting || !(entry.target instanceof HTMLElement)) {
 						continue;
 					}
-					this.mobileReadingObserver?.unobserve(entry.target);
-					this.queueMobileReadingRoot(entry.target);
+					this.readingBlockObserver?.unobserve(entry.target);
+					this.queueReadingRoot(entry.target);
 				}
 			},
 			{ rootMargin: '100% 0px 200% 0px' },
 		);
 	}
 
-	private observeMobileReadingRoot(root: HTMLElement): void {
+	private observeReadingRoot(root: HTMLElement): void {
 		if (!root.isConnected || isEditableCodeMirrorContent(root)) return;
-		for (const renderedRoot of mobileRenderedRoots(root)) {
+		for (const renderedRoot of renderedBlockRoots(root)) {
 			if (!renderedRoot.isConnected) continue;
-			if (this.mobileReadingObserver) {
-				this.mobileReadingObserver.observe(renderedRoot);
+			if (this.readingBlockObserver) {
+				this.readingBlockObserver.observe(renderedRoot);
 			} else {
-				this.queueMobileReadingRoot(renderedRoot);
+				this.queueReadingRoot(renderedRoot);
 			}
 		}
 	}
 
-	private queueMobileReadingRoot(root: HTMLElement): void {
-		this.mobileReadingRoots.add(root);
-		if (this.mobileReadingTimer !== null || this.mobileReadingDrainInProgress) {
+	private queueReadingRoot(root: HTMLElement): void {
+		this.pendingReadingRoots.add(root);
+		if (this.readingBlockTimer !== null || this.readingBlockDrainInProgress) {
 			return;
 		}
-		this.mobileReadingTimer = window.setTimeout(() => {
-			this.mobileReadingTimer = null;
-			void this.drainMobileReadingRoots();
+		this.readingBlockTimer = window.setTimeout(() => {
+			this.readingBlockTimer = null;
+			void this.drainReadingRoots();
 		}, 0);
 	}
 
-	private async drainMobileReadingRoots(): Promise<void> {
-		if (this.mobileReadingDrainInProgress) return;
-		this.mobileReadingDrainInProgress = true;
+	private async drainReadingRoots(): Promise<void> {
+		if (this.readingBlockDrainInProgress) return;
+		this.readingBlockDrainInProgress = true;
 		try {
 			let lastYield = performance.now();
-			while (this.mobileReadingRoots.size > 0) {
-				const iterator = this.mobileReadingRoots.values().next();
+			while (this.pendingReadingRoots.size > 0) {
+				const iterator = this.pendingReadingRoots.values().next();
 				if (iterator.done) break;
 				const root = iterator.value;
-				this.mobileReadingRoots.delete(root);
+				this.pendingReadingRoots.delete(root);
 				if (!root.isConnected) continue;
 
 				const revision = this.settingsRevision;
@@ -1605,55 +1569,61 @@ export default class CustomFuriganaPlugin extends Plugin {
 				}
 			}
 		} finally {
-			this.mobileReadingDrainInProgress = false;
-			if (this.mobileReadingRoots.size > 0) {
-				const iterator = this.mobileReadingRoots.values().next();
-				if (!iterator.done) this.queueMobileReadingRoot(iterator.value);
+			this.readingBlockDrainInProgress = false;
+			if (this.pendingReadingRoots.size > 0) {
+				const iterator = this.pendingReadingRoots.values().next();
+				if (!iterator.done) this.queueReadingRoot(iterator.value);
 			}
 		}
 	}
 
 	private startReadingViewObserver(): void {
 		this.readingViewObserver?.disconnect();
-		// Obsidian's Markdown post processor and workspace events already cover
-		// mobile view changes. Observing the entire document there can feed our
-		// own ruby DOM updates back into another full reading-view pass.
-		if (Platform.isMobileApp) {
-			this.readingViewObserver = null;
-			return;
-		}
 		this.readingViewObserver = new MutationObserver((mutations) => {
-			if (
-				mutations.some((mutation) => {
+			for (const mutation of mutations) {
+				for (const node of Array.from(mutation.addedNodes)) {
 					const element =
-						mutation.target instanceof HTMLElement
-							? mutation.target
-							: mutation.target.parentElement;
-					return Boolean(element?.closest('.markdown-preview-view'));
-				})
-			) {
-				this.queueReadingViewProcessing();
+						node instanceof HTMLElement ? node : node.parentElement;
+					if (!element) continue;
+					if (
+						element.closest(
+							'ruby.custom-furigana-ruby, .custom-furigana-editor-auto',
+						)
+					) {
+						continue;
+					}
+
+					if (
+						element.matches('.markdown-preview-view') ||
+						element.closest('.markdown-preview-view')
+					) {
+						this.observeReadingRoot(element);
+					}
+					for (const preview of Array.from(
+						element.querySelectorAll<HTMLElement>('.markdown-preview-view'),
+					)) {
+						this.observeReadingRoot(preview);
+					}
+				}
 			}
 		});
 		this.readingViewObserver.observe(document.body, {
 			childList: true,
-			characterData: true,
 			subtree: true,
 		});
 	}
 
 	private queueReadingViewProcessing(): void {
 		if (this.readingViewTimer !== null) {
-			if (!Platform.isMobileApp) return;
 			window.clearTimeout(this.readingViewTimer);
 		}
 		this.readingViewTimer = window.setTimeout(() => {
 			this.readingViewTimer = null;
-			void this.processReadingViews();
-		}, Platform.isMobileApp ? 300 : 80);
+			this.processReadingViews();
+		}, Platform.isMobileApp ? 300 : 120);
 	}
 
-	private async processReadingViews(): Promise<void> {
+	private processReadingViews(): void {
 		const views = Array.from(
 			document.querySelectorAll<HTMLElement>('.markdown-preview-view'),
 		);
@@ -1661,42 +1631,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 			const active =
 				views.find((view) => view.closest('.workspace-leaf.mod-active')) ??
 				views[0];
-			if (active) this.observeMobileReadingRoot(active);
+			if (active) this.observeReadingRoot(active);
 			return;
 		}
-		for (const view of views) await this.processReadingView(view);
-	}
-
-	private async processReadingView(view: HTMLElement): Promise<void> {
-		if (this.readingViewsInProgress.has(view)) return;
-		const revision = this.settingsRevision;
-		const needsFullPreparation =
-			this.readingViewPreparedRevisions.get(view) !== revision;
-		const signature = renderedSourceSignature(view, revision);
-		if (this.readingViewSignatures.get(view) === signature) return;
-
-		this.readingViewsInProgress.add(view);
-		try {
-			await this.processRenderedFurigana(view, needsFullPreparation);
-			if (revision === this.settingsRevision) {
-				this.readingViewPreparedRevisions.set(view, revision);
-			}
-		} finally {
-			this.readingViewsInProgress.delete(view);
-			const finalSignature = renderedSourceSignature(
-				view,
-				this.settingsRevision,
-			);
-			if (
-				revision === this.settingsRevision &&
-				finalSignature === signature
-			) {
-				this.readingViewSignatures.set(view, finalSignature);
-			} else {
-				this.readingViewSignatures.delete(view);
-				this.queueReadingViewProcessing();
-			}
-		}
+		for (const view of views) this.observeReadingRoot(view);
 	}
 
 	private prepareRenderedFurigana(root: HTMLElement): void {

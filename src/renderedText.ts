@@ -38,6 +38,7 @@ const RENDERED_BLOCK_TAGS = new Set([
 	'UL',
 ]);
 const RENDERED_EXCLUDED_TAGS = new Set([
+	'A',
 	'CODE',
 	'INPUT',
 	'KBD',
@@ -65,6 +66,7 @@ function isRenderedBlock(element: HTMLElement): boolean {
 function isRenderedExclusion(element: HTMLElement): boolean {
 	return (
 		RENDERED_EXCLUDED_TAGS.has(element.tagName) ||
+		element.hasAttribute('data-href') ||
 		element.classList.contains('math') ||
 		element.classList.contains('frontmatter')
 	);

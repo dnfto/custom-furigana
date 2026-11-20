@@ -12,6 +12,8 @@
 - Preserve Obsidian and embedded-renderer text anchors when generated ruby is restored or replaced.
 - Draw automatic Live Preview readings with non-destructive mark decorations, protect IME composition, and apply only the newest debounced lookup.
 - Improve okurigana alignment for words such as `勢い`, while keeping automatic ruby restricted to reliably aligned kanji ranges.
+- Process desktop Reading View updates as visible blocks instead of rescanning every open preview after any DOM mutation.
+- Preserve internal-link and tag-link DOM so heading/subpath navigation keeps its exact destination.
 
 ## 4.0.9
 
