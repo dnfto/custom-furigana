@@ -17,6 +17,7 @@ import {
 	Menu,
 	Modal,
 	Notice,
+	Platform,
 	Plugin,
 	PluginSettingTab,
 	Setting,
@@ -557,6 +558,15 @@ function visibleTextRanges(
 	return [...ranges.values()];
 }
 
+function renderedRunIsNearViewport(nodes: Text[]): boolean {
+	const parent = nodes.find((node) => node.isConnected)?.parentElement;
+	if (!parent) return false;
+	const rect = parent.getBoundingClientRect();
+	const viewportHeight =
+		window.innerHeight || document.documentElement.clientHeight || 1;
+	return rect.bottom >= -viewportHeight && rect.top <= viewportHeight * 2;
+}
+
 function buildDecorations(
 	view: EditorView,
 	plugin: CustomFuriganaPlugin,
@@ -1074,6 +1084,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private ribbonButton: HTMLElement | null = null;
 	private readingViewTimer: number | null = null;
 	private readingViewObserver: MutationObserver | null = null;
+	private readingViewportRevision = 0;
 	private readonly readingViewSignatures = new WeakMap<HTMLElement, string>();
 	private readonly readingViewsInProgress = new WeakSet<HTMLElement>();
 	private readonly localizedCommands: Array<{
@@ -1117,9 +1128,14 @@ export default class CustomFuriganaPlugin extends Plugin {
 		this.applySettings();
 		this.autoFurigana = new AutoFuriganaEngine(this);
 
-		this.registerMarkdownPostProcessor((element) =>
-			this.processRenderedFurigana(element),
-		);
+		this.registerMarkdownPostProcessor((element) => {
+			if (Platform.isMobileApp) {
+				this.prepareRenderedFurigana(element);
+				this.queueReadingViewProcessing();
+				return;
+			}
+			return this.processRenderedFurigana(element);
+		});
 		this.registerEditorExtension(createLivePreviewExtension(this));
 		this.settingTab = new CustomFuriganaSettingTab(this);
 		this.addSettingTab(this.settingTab);
@@ -1211,22 +1227,31 @@ export default class CustomFuriganaPlugin extends Plugin {
 		this.registerDomEvent(
 			document,
 			'scroll',
-			() => this.queueReadingViewProcessing(),
+			() => {
+				if (Platform.isMobileApp) this.readingViewportRevision += 1;
+				this.queueReadingViewProcessing();
+			},
 			true,
 		);
 		this.registerEvent(
-			this.app.workspace.on('active-leaf-change', () =>
-				this.queueReadingViewProcessing(),
-			),
+			this.app.workspace.on('active-leaf-change', () => {
+				if (Platform.isMobileApp) this.readingViewportRevision += 1;
+				this.queueReadingViewProcessing();
+			}),
 		);
 		this.registerEvent(
-			this.app.workspace.on('file-open', () =>
-				this.queueReadingViewProcessing(),
-			),
+			this.app.workspace.on('file-open', () => {
+				if (Platform.isMobileApp) this.readingViewportRevision += 1;
+				this.queueReadingViewProcessing();
+			}),
 		);
 		this.app.workspace.onLayoutReady(() => {
 			this.startReadingViewObserver();
-			this.refreshViews();
+			if (Platform.isMobileApp) {
+				this.queueReadingViewProcessing();
+			} else {
+				this.refreshViews();
+			}
 		});
 	}
 
@@ -1351,12 +1376,20 @@ export default class CustomFuriganaPlugin extends Plugin {
 	private refreshViews(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
 			const view = leaf.view as {
+				containerEl?: HTMLElement;
 				editor?: { cm?: EditorView };
 				previewMode?: { rerender?: (force?: boolean) => void };
 			};
+			if (
+				Platform.isMobileApp &&
+				!view.containerEl?.closest('.workspace-leaf.mod-active') &&
+				view.containerEl?.getClientRects().length === 0
+			) {
+				continue;
+			}
 			const editorView = view.editor?.cm;
 			editorView?.dispatch({});
-			view.previewMode?.rerender?.(true);
+			if (!Platform.isMobileApp) view.previewMode?.rerender?.(true);
 		}
 		this.queueReadingViewProcessing();
 	}
@@ -1384,25 +1417,39 @@ export default class CustomFuriganaPlugin extends Plugin {
 	}
 
 	private queueReadingViewProcessing(): void {
-		if (this.readingViewTimer !== null) return;
+		if (this.readingViewTimer !== null) {
+			if (!Platform.isMobileApp) return;
+			window.clearTimeout(this.readingViewTimer);
+		}
 		this.readingViewTimer = window.setTimeout(() => {
 			this.readingViewTimer = null;
 			void this.processReadingViews();
-		}, 80);
+		}, Platform.isMobileApp ? 300 : 80);
 	}
 
 	private async processReadingViews(): Promise<void> {
-		await Promise.all(
-			Array.from(
-				document.querySelectorAll<HTMLElement>('.markdown-preview-view'),
-			).map((view) => this.processReadingView(view)),
+		let views = Array.from(
+			document.querySelectorAll<HTMLElement>('.markdown-preview-view'),
 		);
+		if (Platform.isMobileApp) {
+			views = views
+				.filter(
+					(view) =>
+						Boolean(view.closest('.workspace-leaf.mod-active')) ||
+						view.getClientRects().length > 0,
+				)
+				.slice(0, 1);
+		}
+		for (const view of views) await this.processReadingView(view);
 	}
 
 	private async processReadingView(view: HTMLElement): Promise<void> {
 		if (this.readingViewsInProgress.has(view)) return;
 		const revision = this.settingsRevision;
-		const signature = renderedSourceSignature(view, revision);
+		const viewportRevision = this.readingViewportRevision;
+		const signature = `${renderedSourceSignature(view, revision)}:${
+			Platform.isMobileApp ? viewportRevision : 0
+		}`;
 		if (this.readingViewSignatures.get(view) === signature) return;
 
 		this.readingViewsInProgress.add(view);
@@ -1410,11 +1457,15 @@ export default class CustomFuriganaPlugin extends Plugin {
 			await this.processRenderedFurigana(view);
 		} finally {
 			this.readingViewsInProgress.delete(view);
-			const finalSignature = renderedSourceSignature(
+			const finalSignature = `${renderedSourceSignature(
 				view,
 				this.settingsRevision,
-			);
-			if (revision === this.settingsRevision && finalSignature === signature) {
+			)}:${Platform.isMobileApp ? viewportRevision : 0}`;
+			if (
+				revision === this.settingsRevision &&
+				viewportRevision === this.readingViewportRevision &&
+				finalSignature === signature
+			) {
 				this.readingViewSignatures.set(view, finalSignature);
 			} else {
 				this.readingViewSignatures.delete(view);
@@ -1423,8 +1474,7 @@ export default class CustomFuriganaPlugin extends Plugin {
 		}
 	}
 
-	private async processRenderedFurigana(root: HTMLElement): Promise<void> {
-		const renderRevision = this.settingsRevision;
+	private prepareRenderedFurigana(root: HTMLElement): void {
 		unwrapAutomaticRuby(root);
 
 		for (const ruby of Array.from(root.querySelectorAll('ruby'))) {
@@ -1435,10 +1485,30 @@ export default class CustomFuriganaPlugin extends Plugin {
 		}
 
 		renderAuthoredRuby(root);
+	}
+
+	private async processRenderedFurigana(root: HTMLElement): Promise<void> {
+		if (Platform.isMobileApp) {
+			const preview = root.matches('.markdown-preview-view')
+				? root
+				: root.closest<HTMLElement>('.markdown-preview-view');
+			if (
+				preview &&
+				!preview.closest('.workspace-leaf.mod-active') &&
+				preview.getClientRects().length === 0
+			) {
+				return;
+			}
+		}
+
+		const renderRevision = this.settingsRevision;
+		this.prepareRenderedFurigana(root);
 
 		if (this.settings.mode !== 'dictionary') return;
+		let processedJapaneseRuns = 0;
 		for (const nodes of renderedTextRuns(root)) {
 			if (renderRevision !== this.settingsRevision) return;
+			if (Platform.isMobileApp && !renderedRunIsNearViewport(nodes)) continue;
 			if (
 				nodes.length === 0 ||
 				nodes.some((node) => renderedBlockContainsRawRuby(node, root))
@@ -1447,6 +1517,10 @@ export default class CustomFuriganaPlugin extends Plugin {
 			}
 			const { parts, text } = renderedTextParts(nodes);
 			if (!/\p{Script=Han}/u.test(text)) continue;
+			processedJapaneseRuns += 1;
+			if (Platform.isMobileApp && processedJapaneseRuns % 8 === 0) {
+				await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+			}
 			try {
 				const matches = (await this.autoFurigana.annotateText(text))
 					.filter((match) => this.settings.autoLevelEnabled[match.jlptLevel])
@@ -1575,6 +1649,9 @@ export default class CustomFuriganaPlugin extends Plugin {
 		const cached = this.dictionaryCache.get(cacheKey);
 		if (cached) return cached;
 		const result = await this.localDictionary.lookup(query);
+		if (this.settings.uiLanguage === 'ko') {
+			await this.localDictionary.ensureKoreanDictionary();
+		}
 
 		const candidates: DictionaryCandidate[] = [];
 		for (const entry of result.entries) {

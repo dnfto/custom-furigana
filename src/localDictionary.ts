@@ -83,6 +83,7 @@ export class LocalDictionary {
 		string,
 		{ definitions: string[]; partsOfSpeech: string[] }
 	> = {};
+	private koreanDictionaryPromise: Promise<void> | null = null;
 	private readonly mobileShardCache = new Map<
 		number,
 		Record<string, LocalDictionaryEntry[]>
@@ -113,7 +114,6 @@ export class LocalDictionary {
 		try {
 			if (this.isMobileMode) {
 				this.setStatus('ready');
-				void this.loadOptionalKoreanDictionary();
 				return;
 			}
 			await this.ensureDataFiles();
@@ -121,7 +121,7 @@ export class LocalDictionary {
 			const tokenizerPromise = new TokenizerBuilder({
 				loader: new VaultDictionaryLoader(this.plugin, this.dataFolder),
 			}).build();
-			const koreanDictionaryPromise = this.loadOptionalKoreanDictionary();
+			const koreanDictionaryPromise = this.ensureKoreanDictionary();
 
 			const worker = new DictionaryWorker();
 			this.worker = worker;
@@ -188,6 +188,17 @@ export class LocalDictionary {
 		};
 	}
 
+	async ensureKoreanDictionary(): Promise<void> {
+		if (this.koreanDictionaryPromise) return this.koreanDictionaryPromise;
+		this.koreanDictionaryPromise = this.loadKoreanDictionary().catch((error) => {
+			console.warn(
+				'Custom Furigana Korean dictionary is temporarily unavailable; continuing with English definitions',
+				error,
+			);
+		});
+		return this.koreanDictionaryPromise;
+	}
+
 	private async ensureDataFiles(): Promise<void> {
 		for (const file of DATA_FILES) {
 			if (!(await this.plugin.app.vault.adapter.exists(`${this.dataFolder}/${file}`))) {
@@ -209,17 +220,6 @@ export class LocalDictionary {
 			>;
 		};
 		this.koreanDictionary = payload.entries ?? {};
-	}
-
-	private async loadOptionalKoreanDictionary(): Promise<void> {
-		try {
-			await this.loadKoreanDictionary();
-		} catch (error) {
-			console.warn(
-				'Custom Furigana Korean dictionary is temporarily unavailable; continuing with English definitions',
-				error,
-			);
-		}
 	}
 
 	private async readBinaryWithMobileRetry(path: string): Promise<ArrayBuffer> {

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Prevent mobile startup stalls by avoiding forced rerenders of every Markdown tab.
+- Process automatic Reading View ruby only for the active, near-viewport content on mobile and yield between batches.
+- Debounce mobile scroll and DOM updates instead of starting work during an ongoing render burst.
+- Load the optional Korean dictionary only when a Korean dictionary search is requested on mobile.
+
 ## 4.0.9
 
 - Processes Reading View content added or replaced by Obsidian's virtual scrolling without requiring another mode switch.
