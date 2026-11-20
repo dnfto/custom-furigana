@@ -534,6 +534,12 @@ function mobileRenderedRoots(root: HTMLElement): HTMLElement[] {
 		) {
 			return children.flatMap(splitContainer);
 		}
+		const renderedContainers = children.filter((child) =>
+			child.matches('.markdown-preview-sizer, .markdown-preview-section'),
+		);
+		if (renderedContainers.length > 0) {
+			return renderedContainers.flatMap(splitContainer);
+		}
 
 		const renderedBlocks = children.filter((child) =>
 			Array.from(child.classList).some((name) => name.startsWith('el-')),
