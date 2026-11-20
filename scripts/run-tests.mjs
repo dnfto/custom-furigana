@@ -6,18 +6,21 @@ import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
 const outputFolder = await mkdtemp(join(tmpdir(), 'custom-furigana-tests-'));
-const outputPath = join(outputFolder, 'rendered-text.test.mjs');
+const testFiles = ['tests/renderedText.test.ts', 'tests/renderedRuby.test.ts'];
 
 try {
-	await build({
-		entryPoints: ['tests/renderedText.test.ts'],
-		bundle: true,
-		platform: 'node',
-		format: 'esm',
-		outfile: outputPath,
-		logLevel: 'silent',
-	});
-	await import(pathToFileURL(outputPath).href);
+	for (const [index, entryPoint] of testFiles.entries()) {
+		const outputPath = join(outputFolder, `test-${index}.mjs`);
+		await build({
+			entryPoints: [entryPoint],
+			bundle: true,
+			platform: 'node',
+			format: 'esm',
+			outfile: outputPath,
+			logLevel: 'silent',
+		});
+		await import(pathToFileURL(outputPath).href);
+	}
 } finally {
 	await rm(outputFolder, { recursive: true, force: true });
 }
