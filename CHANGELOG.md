@@ -3,12 +3,15 @@
 ## Unreleased
 
 - Prevent mobile startup stalls by avoiding forced rerenders of every Markdown tab.
-- Process automatic Reading View ruby only for the active, near-viewport content on mobile and yield between batches.
-- Debounce mobile scroll and DOM updates instead of starting work during an ongoing render burst.
+- Process mobile Reading View ruby as observed blocks enter the viewport instead of rescanning the entire document on every scroll.
+- Serialize mobile Reading View work and yield within a 12 ms main-thread budget.
 - Load the optional Korean dictionary only when a Korean dictionary search is requested on mobile.
 - Do not rescan an entire Reading View on mobile scroll in Visible or Hidden mode.
 - Avoid mobile feedback loops by relying on Obsidian's Markdown render events instead of observing every document mutation.
 - Keep already generated automatic ruby intact while processing newly visible mobile content.
+- Preserve Obsidian and embedded-renderer text anchors when generated ruby is restored or replaced.
+- Draw automatic Live Preview readings with non-destructive mark decorations, protect IME composition, and apply only the newest debounced lookup.
+- Improve okurigana alignment for words such as `勢い`, while keeping automatic ruby restricted to reliably aligned kanji ranges.
 
 ## 4.0.9
 
