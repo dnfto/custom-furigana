@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.0.10
 
 - Prevent mobile startup stalls by avoiding forced rerenders of every Markdown tab.
 - Process mobile Reading View ruby as observed blocks enter the viewport instead of rescanning the entire document on every scroll.
